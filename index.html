@@ -6,7 +6,7 @@
 <title>采集计时</title><link rel="icon" href="./icon.svg"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<header id="header"><div id="identity">ECG / PPG 采集</div><div id="elapsed-label">尚未开录</div><div class="header-controls"><button data-action="fullscreen" aria-label="全屏">全屏</button><button data-action="menu" aria-label="更多操作">更多</button></div></header>
+<header id="header"><div class="identity-group"><div id="identity">ECG / PPG 采集</div><small id="skip-status" hidden>含跳过</small></div><div id="elapsed-label">尚未开录</div><div class="header-controls"><button id="skip-button" data-action="skip" aria-label="跳过当前步骤" title="跳过当前步骤" hidden>跳过</button><button data-action="fullscreen" aria-label="全屏">全屏</button><button data-action="menu" aria-label="更多操作">更多</button></div></header>
 <div id="storage-warning" class="warning" hidden>本机保存不可用，请在结束时导出记录。</div>
 <div id="attention" class="warning" hidden></div>
 <main id="main">

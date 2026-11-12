@@ -32,15 +32,16 @@ function task(now){
  }
  if(p.kind==='measure'){
   const m=s.measurements[p.round],phase=LABELS[p.round];
-  if(m.pressedAt===null)return {...result,key:'bp',phase,title:'现在测血压',seconds:null,detail:'请操作者按下血压计测量键。',html:button('bp','已按下血压计，确认 →')};
-  const wait=m.pressedAt+10-t;
+  if(m.pressedAt===null&&m.bpSkippedAt==null)return {...result,key:'bp',phase,title:'现在测血压',seconds:null,detail:'请操作者按下血压计测量键。',html:button('bp','已按下血压计，确认 →')};
+  const wait=engine.temperatureDueAt()-t;
   if(wait>0)return {...result,key:'wait-temp',phase,title:'现在保持静坐',seconds:Math.ceil(wait),detail:'倒计时结束后测额温。'};
-  if(m.verifiedAt===null){
+  if(m.verifiedAt===null&&m.temperatureSkippedAt==null){
    if(tempReview?.round===p.round)return {...result,key:'review:'+tempReview.value,phase,title:'核对额温读数',seconds:null,detail:'请对照额温枪，再确认一次。',html:`<div class="reading">${tempReview.value.toFixed(1)} ℃</div>${button('verify-temp','读数正确，进入下一步 →')}${button('edit-temp','重新填写',false,true)}`};
    return {...result,key:'temperature',phase,title:'现在测额温',seconds:null,detail:'由操作者测量，填写额温枪读数。',html:`<div class="temperature-entry"><input id="temperature" type="number" inputmode="decimal" min="25" max="45" step="0.1" value="${esc(tempDraft[p.round]??'')}" aria-label="额温读数"><span>℃</span></div>${button('temperature','已测额温，确认 →')}`};
   }
-  if(m.deflatedAt===null)return {...result,key:'deflate',phase,title:'等待血压测量结束',seconds:null,detail:'确认本次测量结束，袖带已完全放气。',html:button('deflate','已测完且完全放气，确认 →')};
-  return {...result,key:'measured',phase,title:'现在安静静坐',detail:'本次测量已确认，静坐到下一时间点。'};
+  if(m.deflatedAt===null&&m.deflationSkippedAt==null&&m.bpSkippedAt==null)return {...result,key:'deflate',phase,title:'等待血压测量结束',seconds:null,detail:'确认本次测量结束，袖带已完全放气。',html:button('deflate','已测完且完全放气，确认 →')};
+  const skipped=m.bpSkippedAt!=null||m.temperatureSkippedAt!=null||m.deflationSkippedAt!=null;
+  return {...result,key:'measured',phase,title:'现在安静静坐',detail:skipped?'本节点含跳过，静坐到下一时间点。':'本次测量已确认，静坐到下一时间点。'};
  }
  if(p.kind==='settle')return {...result,key:'settle',title:'现在停止踏步',detail:'坐好，双脚平放，前臂支撑。'};
  return {...result,key:'rest'};
@@ -48,6 +49,9 @@ function task(now){
 function render(now){
  const s=engine.s,p=engine.current(),isExercise=s.mode==='running'&&p.kind==='exercise',done=['completed','aborted'].includes(s.mode),t=engine.elapsed(now);
  $('identity').textContent=s.subject?`${s.subjectName||''}　${s.subject}`:'ECG / PPG 采集';
+ $('identity').title=$('identity').textContent;
+ $('skip-status').hidden=!s.skips.length;
+ $('skip-button').hidden=!['prerest','ready','running','await-finish'].includes(s.mode);
  $('elapsed-label').textContent=s.startAt===null?'尚未开录':`采集 ${ft(t)}`;
  $('setup').hidden=s.mode!=='setup';$('current').hidden=s.mode==='setup'||done||isExercise;$('exercise').hidden=!isExercise;$('summary').hidden=!done;
  document.body.classList.toggle('exercise-mode',isExercise);
@@ -76,8 +80,8 @@ function render(now){
   if(announceKey!==lastTask){lastTask=announceKey;$('announcer').textContent=view.title;if(view.key==='bp'||view.key==='temperature'||view.key==='settle'||s.mode==='ready'){tone(880,.12);speak(view.title);}}
  }
  if(done){
-  $('summary-title').textContent=s.mode==='completed'?'采集结束':'已提前终止';$('summary-identity').textContent=`${s.subjectName||''}　编号 ${s.subject}`;$('summary-time').textContent=`实际采集时间 ${ft(t)}`;
-  $('summary-rows').innerHTML=s.measurements.map(m=>`<tr><td>${m.label}</td><td>${m.pressedAt===null?'未确认':ft(m.pressedAt)}</td><td>${m.deflatedAt===null?'未确认':ft(m.deflatedAt)}</td><td>${m.verifiedAt===null?'未确认':m.temperature.toFixed(1)+' ℃ · 已复核'}</td></tr>`).join('');
+  $('summary-title').textContent=s.mode==='completed'?(s.skips.length?'流程结束（含跳过）':'采集结束'):'已提前终止';$('summary-identity').textContent=`${s.subjectName||''}　编号 ${s.subject}`;$('summary-time').textContent=`实际计时 ${ft(t)}${s.skips.length?' · 跳过 '+s.skips.length+' 步':''}`;
+  $('summary-rows').innerHTML=s.measurements.map(m=>`<tr><td>${m.label}</td><td>${m.pressedAt===null?(m.bpSkippedAt!=null?'已跳过':'未确认'):ft(m.pressedAt)}</td><td>${m.deflatedAt===null?(m.deflationSkippedAt!=null?'已跳过':m.bpSkippedAt!=null?'未测量':'未确认'):ft(m.deflatedAt)}</td><td>${m.verifiedAt===null?(m.temperatureSkippedAt!=null?'已跳过':'未确认'):m.temperature.toFixed(1)+' ℃ · 已复核'}</td></tr>`).join('');
  }
 }
 function beat(now){
@@ -92,6 +96,7 @@ function download(kind){
  if(kind==='json'){body=JSON.stringify(r,null,2);type='application/json;charset=utf-8';}
  else{
   const rows=[['记录类型','姓名','编号','测量节点','事件','采集时刻','采集秒数','电脑时间_ISO','额温_℃','额温复核时刻','详情']];
+  rows.push(['流程状态',r.subjectName,r.subjectCode,'',r.hasSkippedSteps?'含跳过':'未跳过','','','','','',JSON.stringify({hasSkippedSteps:r.hasSkippedSteps,skippedSteps:r.skippedSteps,recordingStartConfirmed:r.recordingStartConfirmed,recordingStopConfirmed:r.recordingStopConfirmed})]);
   r.measurements.forEach(m=>rows.push(['测量',r.subjectName,r.subjectCode,m.label,'血压按键',m.pressedAt===null?'':ft(m.pressedAt),m.pressedAt??'',m.pressedAt===null?'':new Date(engine.s.startAt+m.pressedAt*1000).toISOString(),m.temperature??'',m.verifiedAt===null?'':ft(m.verifiedAt),`完全放气=${m.deflatedAt===null?'未确认':ft(m.deflatedAt)}`]));
   r.events.forEach(e=>rows.push(['操作',r.subjectName,r.subjectCode,e.round===undefined?'':LABELS[e.round],e.type,e.elapsed===null?'':ft(e.elapsed),e.elapsed??'',new Date(e.at).toISOString(),e.value??'','',JSON.stringify(e)]));
   rows.push(['结束',r.subjectName,r.subjectCode,'',r.status,ft(r.recordingSeconds),r.recordingSeconds,r.endedAt||'','','','']);
@@ -107,6 +112,7 @@ for(const id of ['sound','voice'])$(id).addEventListener('change',()=>{try{local
 document.addEventListener('click',async e=>{
  const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,now=Date.now(),p=engine.current(),s=engine.s;
  switch(a){
+ case 'skip':if(engine.skip(now)){tempReview=null;lastBeat=-1;if('speechSynthesis'in window)speechSynthesis.cancel();if(engine.s.mode==='completed')release();changed();}break;
  case 'begin':full();await unlock();engine.begin(Date.now());wake();changed();break;
  case 'quality':engine.confirmQuality(now);engine.tick(now);changed();break;
  case 'bp':engine.pressBp(now);changed();break;

@@ -30,17 +30,18 @@ export function formatTime(seconds) {
 export function newState(now = Date.now()) {
   return {
     version: PROTOCOL_VERSION, createdAt: now, mode: 'setup', subject: '', subjectName: '', operator: '',
-    preStart: null, startAt: null, endAt: null, index: 0, lastTick: null,
+    preStart: null, preEnd: null, startAt: null, endAt: null, index: 0, lastTick: null,
+    recordingStartConfirmed: null, recordingStopConfirmed: null, skips: [],
     phases: BASE_PHASES.map(p => ({...p, extra: 0, actualStart: null, actualEnd: null})),
     quality: LABELS.map(() => ({since: null, confirmedAt: null, unstable: false})),
-    measurements: LABELS.map(label => ({label, pressedAt: null, pressConfirmedAt: null, deflatedAt: null, temperature: null, temperatureAt: null, verifiedAt: null})),
+    measurements: LABELS.map(label => ({label, pressedAt: null, pressConfirmedAt: null, deflatedAt: null, temperature: null, temperatureAt: null, verifiedAt: null, bpSkippedAt: null, temperatureSkippedAt: null, deflationSkippedAt: null, temperaturePromptAt: null})),
     hold: null, events: [], prechecks: [], finalChecks: [], minBpInterval: 240,
     notes: '', recovered: false, completedVerification: false,
   };
 }
 
 export class ProtocolEngine {
-  constructor(state = newState()) { this.s = state; }
+  constructor(state = newState()) { this.s = state; this.s.skips ??= []; }
   elapsed(now = Date.now()) { return this.s.startAt === null ? 0 : ((this.s.endAt ?? now) - this.s.startAt) / 1000; }
   current() { return this.s.phases[this.s.index]; }
   log(type, detail = {}, now = Date.now()) {
@@ -51,11 +52,16 @@ export class ProtocolEngine {
     this.s.mode = 'prerest'; this.s.preStart = now;
     this.log('pre_rest_started', {duration: PRE_REST}, now); return true;
   }
-  begin(now) {
+  begin(now, {confirmed = true} = {}) {
     if (this.s.mode !== 'ready') return false;
     this.s.mode = 'running'; this.s.startAt = now; this.s.lastTick = now;
     this.s.phases[0].actualStart = 0; this.s.quality[0].since = 0;
-    this.log('recording_start_confirmed', {}, now); return true;
+    this.s.recordingStartConfirmed = confirmed;
+    this.log(confirmed ? 'recording_start_confirmed' : 'recording_timer_started_for_demo', {}, now); return true;
+  }
+  temperatureDueAt() {
+    const m = this.s.measurements[this.current().round];
+    return m.temperaturePromptAt ?? (m.pressedAt === null ? null : m.pressedAt + 10);
   }
   phaseTarget() {
     const p = this.current();
@@ -90,15 +96,15 @@ export class ProtocolEngine {
     }
     if (p.kind === 'measure') {
       const m = this.s.measurements[p.round];
-      if (m.pressedAt === null) reasons.push('等待确认已按下血压计测量键');
-      if (m.deflatedAt === null) reasons.push('等待确认血压测量完成、袖带完全放气');
-      if (m.verifiedAt === null) reasons.push('等待额温测量及读数复核');
+      if (m.pressedAt === null && m.bpSkippedAt == null) reasons.push('等待确认已按下血压计测量键');
+      if (m.deflatedAt === null && m.deflationSkippedAt == null && m.bpSkippedAt == null) reasons.push('等待确认血压测量完成、袖带完全放气');
+      if (m.verifiedAt === null && m.temperatureSkippedAt == null) reasons.push('等待额温测量及读数复核');
     }
     return reasons;
   }
   tick(now) {
     if (this.s.mode === 'prerest' && now - this.s.preStart >= PRE_REST * 1000) {
-      this.s.mode = 'ready'; this.log('pre_rest_completed', {}, now); return 'ready';
+      this.s.mode = 'ready'; this.s.preEnd = now; this.log('pre_rest_completed', {}, now); return 'ready';
     }
     if (this.s.mode !== 'running') return null;
     if (this.s.lastTick !== null && now - this.s.lastTick > 5000 && !this.s.hold) {
@@ -107,8 +113,13 @@ export class ProtocolEngine {
     this.s.lastTick = now;
     const p = this.current(), t = this.elapsed(now);
     if (t + 0.001 < this.phaseTarget() || this.blockers(now).length) return null;
+    return this.advance(now);
+  }
+  advance(now, {skipped = false} = {}) {
+    const p = this.current(), t = this.elapsed(now);
     p.actualEnd = t;
-    this.log('phase_completed', {phase: p.id, actualDuration: t - p.actualStart}, now);
+    if (skipped) p.skippedAt = t;
+    this.log(skipped ? 'phase_skipped' : 'phase_completed', {phase: p.id, actualDuration: t - p.actualStart}, now);
     if (this.s.index === this.s.phases.length - 1) {
       this.s.mode = 'await-finish'; this.log('ready_to_stop_recording', {}, now); return 'await-finish';
     }
@@ -117,6 +128,41 @@ export class ProtocolEngine {
     if (next.kind === 'quality') this.s.quality[next.round].since = t;
     this.log('phase_started', {phase: next.id}, now);
     return 'phase';
+  }
+  skip(now) {
+    const s = this.s;
+    if (!['prerest', 'ready', 'running', 'await-finish'].includes(s.mode)) return false;
+    const p = this.current(), t = this.elapsed(now);
+    let step;
+    if (s.mode === 'prerest') {
+      step = 'pre_rest'; s.preEnd = now;
+    } else if (s.mode === 'ready') step = 'recording_start';
+    else if (s.mode === 'await-finish') step = 'recording_stop';
+    else if (p.kind === 'measure') {
+      const m = s.measurements[p.round], due = this.temperatureDueAt();
+      if (m.pressedAt === null && m.bpSkippedAt == null) {
+        step = 'bp'; m.bpSkippedAt = t; m.temperaturePromptAt = t;
+      } else if (m.verifiedAt === null && m.temperatureSkippedAt == null && due !== null && t < due) {
+        step = 'temperature_wait'; m.temperaturePromptAt = t;
+      } else if (m.verifiedAt === null && m.temperatureSkippedAt == null) {
+        step = 'temperature'; m.temperatureSkippedAt = t;
+      } else if (m.pressedAt !== null && m.deflatedAt === null && m.deflationSkippedAt == null) {
+        step = 'deflation'; m.deflationSkippedAt = t;
+      } else step = 'phase';
+    } else step = 'phase';
+    const skipped = {step, phase: s.mode === 'running' ? p.id : s.mode, at: now, elapsed: s.startAt === null ? null : t};
+    if (step === 'pre_rest') skipped.remainingSeconds = Math.max(0, PRE_REST - (now - s.preStart) / 1000);
+    else if (step === 'phase') skipped.remainingSeconds = Math.max(0, this.phaseTarget() - t);
+    s.skips.push(skipped);
+    this.log('step_skipped', {step, phase: skipped.phase, remainingSeconds: skipped.remainingSeconds}, now);
+    if (s.hold) { this.log('hold_resolved', {via: 'skip', kind: s.hold.kind}, now); s.hold = null; }
+    s.lastTick = now;
+    if (step === 'pre_rest') s.mode = 'ready';
+    else if (step === 'recording_start') this.begin(now, {confirmed: false});
+    else if (step === 'recording_stop') {
+      s.mode = 'completed'; s.endAt = now; s.recordingStopConfirmed = false;
+    } else if (step === 'phase') this.advance(now, {skipped: true});
+    return step;
   }
   extend(seconds, reason, now) {
     if (this.s.mode !== 'running' || this.current().kind === 'exercise' || !Number.isFinite(seconds) || seconds < 1 || seconds > 3600) return false;
@@ -168,13 +214,14 @@ export class ProtocolEngine {
   }
   confirmTemperature(value, measuredAt, now) {
     const p = this.current(), m = this.s.measurements[p.round];
-    if (this.s.mode !== 'running' || p.kind !== 'measure' || m.pressedAt === null || measuredAt < m.pressedAt + 10 || m.verifiedAt !== null || !Number.isFinite(value) || value < 25 || value > 45) return false;
+    const due = p.kind === 'measure' ? this.temperatureDueAt() : null;
+    if (this.s.mode !== 'running' || p.kind !== 'measure' || due === null || measuredAt < due || m.verifiedAt !== null || m.temperatureSkippedAt != null || !Number.isFinite(value) || value < 25 || value > 45) return false;
     m.temperature = value; m.temperatureAt = measuredAt; m.verifiedAt = this.elapsed(now);
     this.log('temperature_measured_and_verified', {round: p.round, value, measuredAt}, now); return true;
   }
   finish(now) {
     if (this.s.mode !== 'await-finish' || !this.s.recovered) return false;
-    this.s.mode = 'completed'; this.s.endAt = now;
+    this.s.mode = 'completed'; this.s.endAt = now; this.s.recordingStopConfirmed = true;
     this.log('recording_stopped_by_operator', {}, now); return true;
   }
   abort(reason, now) {
@@ -209,6 +256,10 @@ export class ProtocolEngine {
       startedAt: s.startAt === null ? null : new Date(s.startAt).toISOString(),
       endedAt: s.endAt === null ? null : new Date(s.endAt).toISOString(),
       recordingSeconds: this.elapsed(now), preRestSeconds: PRE_REST,
+      preRestActualSeconds: s.preStart != null && s.preEnd != null ? (s.preEnd - s.preStart) / 1000 : null,
+      recordingStartConfirmed: s.recordingStartConfirmed ?? null,
+      recordingStopConfirmed: s.recordingStopConfirmed ?? null,
+      hasSkippedSteps: s.skips.length > 0, skippedSteps: s.skips,
       minimumBpIntervalSeconds: s.minBpInterval,
       prechecks: s.prechecks, measurements: s.measurements,
       validWaveformManualChecks: s.quality, phases: this.schedule(now),
