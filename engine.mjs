@@ -29,7 +29,7 @@ export function formatTime(seconds) {
 }
 export function newState(now = Date.now()) {
   return {
-    version: PROTOCOL_VERSION, createdAt: now, mode: 'setup', subject: '', operator: '',
+    version: PROTOCOL_VERSION, createdAt: now, mode: 'setup', subject: '', subjectName: '', operator: '',
     preStart: null, startAt: null, endAt: null, index: 0, lastTick: null,
     phases: BASE_PHASES.map(p => ({...p, extra: 0, actualStart: null, actualEnd: null})),
     quality: LABELS.map(() => ({since: null, confirmedAt: null, unstable: false})),
@@ -205,7 +205,7 @@ export class ProtocolEngine {
     const s = this.s;
     return {
       protocol: 'ECG 与 PPG 血压预测采集流程', version: s.version,
-      subjectCode: s.subject, operator: s.operator, status: s.mode,
+      subjectCode: s.subject, subjectName: s.subjectName || '', operator: s.operator, status: s.mode,
       startedAt: s.startAt === null ? null : new Date(s.startAt).toISOString(),
       endedAt: s.endAt === null ? null : new Date(s.endAt).toISOString(),
       recordingSeconds: this.elapsed(now), preRestSeconds: PRE_REST,
