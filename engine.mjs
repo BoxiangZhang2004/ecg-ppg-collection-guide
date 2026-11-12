@@ -84,7 +84,7 @@ export class ProtocolEngine {
   applySignalQuality(result, now) {
     if(!this.s.qualityAutomatic||this.s.mode!=='running'||this.current().kind!=='quality')return;
     const q=this.s.quality[this.current().round],t=this.elapsed(now);
-    q.automatic=true;q.latestQualityOk=!!result.ok;q.lastQualityCheck=t;q.automaticReason=result.reason;
+    q.automatic=true;q.latestQualityOk=!!result.ok;q.lastQualityCheck=t;q.automaticReason=result.reason;q.automaticStatus=result.status??(result.ok?'pass':'fail');
     if(q.manualUnstable)return;
     if(!result.ok){
       if(q.since!==null||!q.unstable||q.confirmedAt!==null){q.since=null;q.unstable=true;q.confirmedAt=null;this.log('automatic_quality_rejected',{round:this.current().round,reason:result.reason},now);}
@@ -276,7 +276,7 @@ export class ProtocolEngine {
       validWaveformManualChecks: s.quality, phases: this.schedule(now),
       finalChecks: s.finalChecks, completedVerification: s.completedVerification,
       notes: s.notes, events: s.events,
-      scope: '网页为计时与人工操作记录工具，不连接采集板或血压计，不自动判定波形质量；血压结果以设备保存记录为准。',
+      scope: s.qualityAutomatic ? '网页连接 ECG/PPG 采集板，保存原始数据并进行工程质量初筛；测压前不合格信号会等待恢复后重新累计连续 80 秒，仍须人工核验；血压结果以血压计保存记录为准。' : '网页记录计时及人工操作；自动质量初筛未启用，血压结果以血压计保存记录为准。',
     };
   }
 }

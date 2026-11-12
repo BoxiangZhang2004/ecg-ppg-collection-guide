@@ -1,4 +1,4 @@
-// Reused from the user's PulseScope a133eb8. Used for quality screening only.
+// Reused from the user's PulseScope a133eb8 for quality screening and waveform preview.
 export class SOSFilter {
  constructor(sos){this.sos=sos;this.reset();}
  reset(){this.z=this.sos.map(()=>[0,0]);this.initialized=false;}

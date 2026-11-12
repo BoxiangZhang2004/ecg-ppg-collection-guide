@@ -1,5 +1,5 @@
-import {SOSFilter,estimate} from './pulse-processing.mjs?v=4.1';
-import config from './signal-filters.mjs?v=4.1';
+import {SOSFilter,estimate} from './pulse-processing.mjs?v=4.2';
+import config from './signal-filters.mjs?v=4.2';
 export const QUALITY_RULES={version:'raw-screen-20261112-v1',nominalHz:500,rateMin:475,rateMax:525,staleMs:500,railFraction:.01,minSpanADC:8,analysisSamples:5000,warmupSamples:1500};
 export class Ring {
   constructor(capacity){this.capacity=capacity;this.data=new Array(capacity);this.size=0;this.cursor=0;}
@@ -30,6 +30,7 @@ export class QualityMonitor {
     const row={p,e,pf:this.ppg.next(p),ef:this.ecg.next(e),q:this.qrs.next(e)};this.raw.push(row);if(this.count>QUALITY_RULES.warmupSamples)this.window.push(row);
     if(this.rates.at(-1)?.at===now)this.rates.at(-1).count=this.total;else this.rates.push({at:now,count:this.total});
     while(this.rates.length>1&&this.rates[1].at<now-5000)this.rates.shift();
+    return row;
   }
   snapshot(now){
     const first=this.rates[0],rate=first&&now-first.at>=2000?(this.total-first.count)*1000/(now-first.at):null;

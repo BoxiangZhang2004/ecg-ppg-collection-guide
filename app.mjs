@@ -1,5 +1,5 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.1';
-import {Acquisition} from './acquisition.mjs?v=4.1';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.2';
+import {Acquisition} from './acquisition.mjs?v=4.2';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let engine=new ProtocolEngine(),audio,lock,renderKey='',lastRender=0,lastSave=0,lastBeat=-1,lastTask='',tempReview=null,tempDraft={},dialogCallback,backgroundAt=null;
@@ -7,7 +7,7 @@ try{const s=JSON.parse(localStorage.getItem(KEY)||'null');if(s?.version===PROTOC
 try{const p=JSON.parse(localStorage.getItem(PREFS)||'null');if(p){$('sound').checked=p.sound;$('voice').checked=p.voice;}}catch{}
 $('subject-name').value=engine.s.subjectName||'';$('subject-code').value=engine.s.subject||'';
 engine.s.qualityAutomatic=true;
-let signalState={ok:false,status:'waiting',reason:'等待原始数据',ecg:{ok:false,reason:'判断中'},ppg:{ok:false,reason:'判断中'}},recordingBusy=false,exportBusy=false,lastSignalCheck=0,lastPlot=0,recoveredRaw=null,lastFault='';
+let signalState={ok:false,status:'waiting',reason:'等待原始数据',ecg:{ok:false,reason:'判断中'},ppg:{ok:false,reason:'判断中'}},recordingBusy=false,exportBusy=false,lastSignalCheck=0,lastPlot=0,recoveredRaw=null,lastFault='',showRaw=false;
 const capture=new Acquisition({context:()=>{const t=engine.elapsed(),s=engine.s;return {phase:engine.current().id,qualityState:signalState.status,interference:s.measurements.some(m=>m.pressedAt!==null&&t>=m.pressedAt&&(m.deflatedAt===null||t<=m.deflatedAt+30))};},onNotice:text=>{$('raw-notice').textContent=text;},onFault:(kind,text)=>{$('raw-notice').textContent=text;if(engine.s.mode==='running'){engine.hold(kind,text,Date.now());if(lastFault!==text){engine.log('acquisition_fault',{kind,reason:text},Date.now());lastFault=text;}}changed();}});
 capture.journal.open().then(async()=>{if(engine.s.rawSessionId){recoveredRaw=await capture.journal.get(engine.s.rawSessionId);changed();}}).catch(error=>{$('raw-notice').textContent='本机数据库不可用：'+error.message;});
 function save(){try{localStorage.setItem(KEY,JSON.stringify(engine.s));$('storage-warning').hidden=true;}catch{$('storage-warning').hidden=false;}}
@@ -33,8 +33,8 @@ function task(now){
   let intervalReady=true;if(p.round>0){const last=s.measurements[p.round-1].deflatedAt;intervalReady=last!==null&&t-last>=s.minBpInterval;}
   const ready=valid>=80&&t>=engine.phaseTarget()&&intervalReady;
   if(q.unstable&&q.manualUnstable)return {...result,key:'unstable',title:'等待信号稳定',seconds:null,detail:'波形稳定后，重新计满连续 80 秒。',html:button('restart-quality','信号已稳定，重新计 80 秒')};
-  if(q.unstable)return {...result,key:'automatic-waiting',title:'现在安静静坐',seconds:null,detail:(q.automaticReason||'质量尚未通过')+'。恢复后自动重新计数，可直接加时。',hint:'有效波形：0 / 80 秒'};
-  return {...result,key:'quality:'+ready+':'+(q.confirmedAt!==null),detail:'保持安静。自动初筛通过后计数，仍请核对原始波形。',html:button('quality',q.confirmedAt!==null?'已核验，等待进入测量':'连续 80 秒通过，确认测血压 →',!ready||q.confirmedAt!==null),hint:`有效波形：${Math.min(80,Math.floor(valid))} / 80 秒`};
+  if(q.unstable)return {...result,key:'automatic-waiting:'+q.automaticStatus,title:q.automaticStatus==='waiting'?'正在评估信号':'信号不佳，自动延长采集',seconds:null,detail:(q.automaticReason||'质量尚未通过')+'。\n保持静坐，恢复后自动重新累计连续 80 秒。',hint:'有效波形：0 / 80 秒 · 原始保存继续，后续步骤顺延'};
+  return {...result,key:'quality:'+ready+':'+(q.confirmedAt!==null),detail:'保持安静。自动初筛通过后计数，确认前请核对波形。',html:button('quality',q.confirmedAt!==null?'已核验，等待进入测量':'连续 80 秒通过，确认测血压 →',!ready||q.confirmedAt!==null),hint:`有效波形：${Math.min(80,Math.floor(valid))} / 80 秒`};
  }
  if(p.kind==='measure'){
   const m=s.measurements[p.round],phase=LABELS[p.round];
@@ -70,6 +70,9 @@ function render(now){
  const interference=rec.recording&&capture.context().interference;
  $('quality-overall').textContent=interference&&!rec.fault?'测压干扰期：原始数据保留，不计入有效段':signalState.reason+(capture.source==='synthetic'?'（合成数据）':'');$('quality-overall').className=interference?'quality-waiting':'quality-'+signalState.status;
  for(const kind of ['ecg','ppg']){$(kind+'-quality').textContent=signalState[kind]?.reason||'判断中';$(kind+'-quality').className=signalState[kind]?.ok?'quality-pass':signalState.status==='waiting'?'quality-waiting':'quality-fail';}
+ for(const kind of ['ecg','ppg']){$(kind+'-plot-label').textContent=kind.toUpperCase()+(showRaw?' 原始 ADC':' 滤波（N=2）');$(kind+'-waveform').setAttribute('aria-label',kind.toUpperCase()+(showRaw?' 原始波形':' 滤波波形'));}
+ $('waveform-toggle').textContent=showRaw?'显示滤波':'显示原始';$('waveform-toggle').setAttribute('aria-pressed',String(showRaw));
+ $('plot-note').textContent=showRaw?'当前显示原始 ADC；质量初筛继续运行。':'滤波预览：ECG 0.5–40 Hz + 50 Hz 陷波，PPG 0.5–8 Hz；保存原始 ADC。';
  $('receive-info').textContent=`${signalState.rateHz==null?'—':Math.round(signalState.rateHz)} Hz · ${capture.parser.protocol==='text'?'文本帧':capture.parser.protocol==='binary'?'AA BB 帧':'协议识别中'}`;
  $('exercise-recording').textContent=rec.recording?`${capture.source==='synthetic'?'合成数据 · ':''}已写入 ${(rec.savedFrames||0).toLocaleString()} 帧 · 运动中继续保存`:'未保存原始数据 · 当前仅为引导展示';
  const canDelay=s.mode==='running'&&!isExercise;
@@ -132,22 +135,26 @@ async function downloadRaw(id=engine.s.rawSessionId||recoveredRaw?.id){
  if(exportBusy)return;exportBusy=true;changed();
  try{const result=await capture.export(id,id===engine.s.rawSessionId?engine.report():null);if(id===capture.recorder.session?.id&&capture.recorder.fault)capture.recorder.unsavedExported=true;const url=URL.createObjectURL(result.blob),a=document.createElement('a');a.href=url;a.download=result.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);toast('已导出原始采集包，请自行备份。');}finally{exportBusy=false;changed();}
 }
-function drawRaw(now){
+function drawWaveforms(now){
  if($('acquisition-panel').hidden)return;
  const rows=capture.plot.array().slice(-2500),scale=Math.min(devicePixelRatio||1,2);
- for(const [id,key,color] of [['ecg-raw','e','#125cbb'],['ppg-raw','p','#16733a']]){
+ for(const [kind,rawKey,filteredKey,color] of [['ecg','e','ef','#125cbb'],['ppg','p','pf','#16733a']]){
+  const id=kind+'-waveform',key=showRaw?rawKey:filteredKey;
   const canvas=$(id),width=Math.max(80,canvas.clientWidth),height=Math.max(80,canvas.clientHeight);
   if(canvas.width!==Math.round(width*scale)||canvas.height!==Math.round(height*scale)){canvas.width=Math.round(width*scale);canvas.height=Math.round(height*scale);}
   const c=canvas.getContext('2d');c.setTransform(scale,0,0,scale,0,0);c.clearRect(0,0,width,height);c.font='10px sans-serif';c.fillStyle='#555';c.strokeStyle='#e4e4e4';c.lineWidth=1;
   const left=35,right=width-7,top=9,bottom=height-18;
   for(let j=0;j<3;j++){const y=top+(bottom-top)*j/2;c.beginPath();c.moveTo(left,y);c.lineTo(right,y);c.stroke();}
-  if(!rows.length){c.fillText('等待原始 ADC',left+8,(top+bottom)/2);continue;}
-  let low=1023,high=0;for(const row of rows){low=Math.min(low,row[key]);high=Math.max(high,row[key]);}const margin=Math.max(4,(high-low)*.08);low=Math.max(0,Math.floor(low-margin));high=Math.min(1023,Math.ceil(high+margin));if(high-low<8)high=Math.min(1023,low+8);if(high===low)low=Math.max(0,high-8);
-  c.fillText(String(high),2,top+7);c.fillText(String(low),2,bottom);c.fillText('最近 '+rows.length+' 帧 · 原始 ADC',left,bottom+13);
+  if(!rows.length){c.fillText(showRaw?'等待原始 ADC':'等待信号',left+8,(top+bottom)/2);continue;}
+  let low=Infinity,high=-Infinity;for(const row of rows){low=Math.min(low,row[key]);high=Math.max(high,row[key]);}
+  const margin=Math.max(showRaw?4:1,(high-low)*.08);low=Math.floor(low-margin);high=Math.ceil(high+margin);
+  if(showRaw){low=Math.max(0,low);high=Math.min(1023,high);if(high-low<8)high=Math.min(1023,low+8);if(high===low)low=Math.max(0,high-8);}
+  const warming=!showRaw&&!rows.at(-1).warm;
+  c.fillText(String(high),2,top+7);c.fillText(String(low),2,bottom);c.fillText('最近 '+rows.length+' 帧 · '+(showRaw?'原始 ADC':warming?'滤波预热中':'滤波，相对幅度'),left,bottom+13);
   const y=v=>bottom-(v-low)/(high-low)*(bottom-top);c.strokeStyle=now-(capture.monitor.lastReceived??0)>500?'#888':color;c.lineWidth=1;c.beginPath();
   const buckets=Math.max(1,Math.floor(right-left));
   for(let x=0;x<buckets;x++){const a=Math.floor(x*rows.length/buckets),b=Math.max(a+1,Math.floor((x+1)*rows.length/buckets));let min=Infinity,max=-Infinity;for(let i=a;i<b&&i<rows.length;i++){min=Math.min(min,rows[i][key]);max=Math.max(max,rows[i][key]);}if(min!==Infinity){c.moveTo(left+x,y(min));c.lineTo(left+x,y(max));}}
-  c.stroke();c.beginPath();for(let x=0;x<buckets;x++){const index=Math.min(rows.length-1,Math.floor(x*rows.length/buckets)),v=y(rows[index][key]);if(x===0)c.moveTo(left+x,v);else c.lineTo(left+x,v);}c.stroke();
+  c.stroke();c.beginPath();let previous=null;for(let x=0;x<buckets;x++){const index=Math.min(rows.length-1,Math.floor(x*rows.length/buckets)),row=rows[index],v=y(row[key]);if(!previous||row.segment!==previous.segment||row.at-previous.at>500)c.moveTo(left+x,v);else c.lineTo(left+x,v);previous=row;}c.stroke();
  }
 }
 function download(kind){
@@ -173,6 +180,7 @@ document.addEventListener('click',async e=>{
  try{switch(a){
  case 'connect':await capture.connect();changed();break;
  case 'demo-signal':$('menu').hidden=true;await capture.demo();changed();break;
+ case 'toggle-waveform':showRaw=!showRaw;changed();drawWaveforms(now);break;
  case 'export-raw':await downloadRaw();break;
  case 'export-saved':await downloadRaw(el.dataset.id);break;
  case 'raw-history':{const records=await capture.journal.list();$('menu').hidden=true;ask('本机原始记录',records.length?records.slice(0,20).map(r=>`<div class="history-row"><span>${esc(r.subjectName)} ${esc(r.subjectCode)}${r.synthetic?' · 合成':''}<small>${new Date(r.startedAt).toLocaleString('zh-CN')} · ${r.frames.toLocaleString()} 帧</small></span><button type="button" data-action="export-saved" data-id="${esc(r.id)}">导出</button></div>`).join(''):'<p>尚无本机原始记录。</p>','关闭',()=>{});break;}
@@ -204,5 +212,5 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){background
 window.addEventListener('pagehide',()=>{save();capture.recorder.flush();});window.addEventListener('beforeunload',e=>{if(['running','prerest','await-finish'].includes(engine.s.mode)){save();capture.recorder.flush();e.preventDefault();e.returnValue='';}});
 window.addEventListener('storage',e=>{if(e.key===KEY&&engine.s.mode==='running'&&!engine.s.hold){engine.hold('attention','另一标签页修改了记录，请仅用一个页面',Date.now());changed();}});
 render(Date.now());save();
-setInterval(()=>{const now=Date.now();if(now-lastSignalCheck>=100){signalState=capture.snapshot(now);engine.applySignalQuality({...signalState,ok:signalState.ok&&capture.recorder.recording&&capture.recorder.frames>0,reason:capture.recorder.recording?signalState.reason:'尚未保存原始数据'},now);lastSignalCheck=now;}capture.tick(now,signalState);if(capture.recorder.recording&&engine.s.mode==='running'&&capture.monitor.lastReceived!==null&&now-capture.monitor.lastReceived>1000)engine.hold('data','数据断流，请检查设备',now);const transition=engine.tick(now);if(transition){lastBeat=-1;save();if(transition==='await-finish'){tone(880,.15);speak('现在确认恢复并停止记录');}}if(now-lastRender>=100||transition){render(now);lastRender=now;}if(now-lastPlot>=100){drawRaw(now);lastPlot=now;}beat(now);if(now-lastSave>=1000){save();lastSave=now;}},50);
+setInterval(()=>{const now=Date.now();if(now-lastSignalCheck>=100){signalState=capture.snapshot(now);engine.applySignalQuality({...signalState,ok:signalState.ok&&capture.recorder.recording&&capture.recorder.frames>0,reason:capture.recorder.recording?signalState.reason:'尚未保存原始数据'},now);lastSignalCheck=now;}capture.tick(now,signalState);if(capture.recorder.recording&&engine.s.mode==='running'&&capture.monitor.lastReceived!==null&&now-capture.monitor.lastReceived>1000)engine.hold('data','数据断流，请检查设备',now);const transition=engine.tick(now);if(transition){lastBeat=-1;save();if(transition==='await-finish'){tone(880,.15);speak('现在确认恢复并停止记录');}}if(now-lastRender>=100||transition){render(now);lastRender=now;}if(now-lastPlot>=100){drawWaveforms(now);lastPlot=now;}beat(now);if(now-lastSave>=1000){save();lastSave=now;}},50);
 if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});

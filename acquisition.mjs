@@ -1,14 +1,14 @@
-import {AutoFrameParser,SERIAL_CONFIG,encodeBinary} from './serial-protocol.mjs?v=4.1';
-import {QualityMonitor,Ring,QUALITY_RULES} from './signal-quality.mjs?v=4.1';
-import {RawJournal,RawRecorder,CSV_HEADER} from './raw-storage.mjs?v=4.1';
-import {zipStore} from './zip-store.mjs?v=4.1';
+import {AutoFrameParser,SERIAL_CONFIG,encodeBinary} from './serial-protocol.mjs?v=4.2';
+import {QualityMonitor,Ring,QUALITY_RULES} from './signal-quality.mjs?v=4.2';
+import {RawJournal,RawRecorder,CSV_HEADER} from './raw-storage.mjs?v=4.2';
+import {zipStore} from './zip-store.mjs?v=4.2';
 export function syntheticSample(n){const t=n/500,phase=(t*75/60)%1,g=(m,s)=>Math.exp(-.5*((phase-m)/s)**2);return [Math.round(450+70*g(.43,.085)+2*Math.sin(2*Math.PI*3*t)),Math.round(512+150*g(.15,.018)-70*g(.19,.022)+40*Math.sin(2*Math.PI*50*t))];}
 export class Acquisition {
   constructor({context=()=>({phase:'preview',interference:false,qualityState:'waiting'}),onFault=()=>{},onNotice=()=>{}}={}){
     this.context=context;this.onFault=onFault;this.onNotice=onNotice;this.monitor=new QualityMonitor();this.plot=new Ring(5000);this.source='idle';this.connected=false;this.connecting=false;this.port=null;this.reader=null;this.closing=false;this.demoTimer=null;this.journal=new RawJournal();
     this.recorder=new RawRecorder(this.journal,error=>{this.onFault('storage','原始保存失败，记录已停止：'+error.message);});this.makeParser();this.lastFlush=0;this.lastQualityLog=0;
   }
-  makeParser(){this.parser=new AutoFrameParser((p,e)=>{const now=this.chunkTime??Date.now();if(this.recorder.recording&&this.recorder.session.protocol!==this.parser.protocol){const reason='记录中协议发生变化，请导出并新建记录';this.recorder.addQuality({event:'protocol_changed',at:now,from:this.recorder.session.protocol,to:this.parser.protocol});this.recorder.recording=false;this.recorder.fault=new Error(reason);this.onFault('protocol',reason);return;}this.monitor.accept(p,e,now);this.plot.push({p,e,at:now,segment:this.monitor.segment});this.recorder.addSample(p,e,now,this.context(),this.monitor.segment);},reason=>{this.monitor.reset(reason);this.recorder.addQuality({event:'parser_resync',reason,at:this.chunkTime??Date.now()});});}
+  makeParser(){this.parser=new AutoFrameParser((p,e)=>{const now=this.chunkTime??Date.now();if(this.recorder.recording&&this.recorder.session.protocol!==this.parser.protocol){const reason='记录中协议发生变化，请导出并新建记录';this.recorder.addQuality({event:'protocol_changed',at:now,from:this.recorder.session.protocol,to:this.parser.protocol});this.recorder.recording=false;this.recorder.fault=new Error(reason);this.onFault('protocol',reason);return;}const filtered=this.monitor.accept(p,e,now);this.plot.push({p,e,pf:filtered.pf,ef:filtered.ef,warm:this.monitor.count>QUALITY_RULES.warmupSamples,at:now,segment:this.monitor.segment});this.recorder.addSample(p,e,now,this.context(),this.monitor.segment);},reason=>{this.monitor.reset(reason);this.recorder.addQuality({event:'parser_resync',reason,at:this.chunkTime??Date.now()});});}
   ingest(bytes,now=Date.now()){this.chunkTime=now;this.recorder.addBytes(bytes);this.parser.push(bytes);}
   async connect(){
     if(this.connecting)return;

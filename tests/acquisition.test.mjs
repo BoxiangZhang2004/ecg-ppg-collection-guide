@@ -49,6 +49,23 @@ test('operator invalidation is respected even if the algorithm currently passes'
  e.restartQuality(21000);e.applySignalQuality({ok:true,reason:'pass'},21000);assert.equal(e.s.quality[0].since,21);
  e.applySignalQuality({ok:false,reason:'fail'},22000);assert.equal(e.validSeconds(22000),0);
 });
+test('signal rejection automatically delays BP and later steps until 80 new good seconds',()=>{
+ const e=engine(),m=new QualityMonitor();let n=0,firstRecovery=null,bpAt=null;
+ for(let t=1;t<=185;t++){
+  for(let i=0;i<500;i++,n++){const [p,ecg]=syntheticSample(n);m.accept(t>=60&&t<76?500:p,ecg,(t-1)*1000+Math.floor(i/10)*20+20);}
+  const q=m.snapshot(t*1000);e.applySignalQuality(q,t*1000);
+  if(t===70){assert.equal(q.ok,false);assert.equal(e.validSeconds(t*1000),0);assert.equal(e.current().id,'baseline');}
+  if(t>=76&&q.ok&&firstRecovery===null)firstRecovery=t;
+  if(e.validSeconds(t*1000)>=80)e.confirmQuality(t*1000);
+  e.tick(t*1000);
+  if(e.current().id==='bp0'){bpAt=t;break;}
+ }
+ assert.ok(firstRecovery>76);assert.equal(bpAt,firstRecovery+80);assert.ok(bpAt>90);
+ assert.ok(e.s.events.some(v=>v.type==='automatic_quality_rejected'&&v.reason.includes('PPG')));
+ const schedule=e.schedule(bpAt*1000),exercise=schedule.find(p=>p.id==='exercise1');
+ assert.equal(exercise.start,240+bpAt-90);assert.equal(exercise.duration,40);
+ assert.match(e.report(bpAt*1000).scope,/重新累计连续 80 秒/);
+});
 class MemoryJournal{
  constructor(){this.s=null;this.chunks=[];this.fail=false;}
  async create(meta){return this.s={...meta,id:'session',frames:0,rawBytes:0,chunks:0};}
@@ -57,6 +74,19 @@ class MemoryJournal{
  async get(){return this.s;}
  async parts(){return {metadata:this.s,csv:this.chunks.map(c=>new Blob([c.csv])),raw:this.chunks.flatMap(c=>c.bytes),quality:this.chunks.flatMap(c=>c.quality)};}
 }
+test('filtered preview removes DC but retains exact raw ADC and cannot approve flat signals',async()=>{
+ const a=new Acquisition();a.journal=new MemoryJournal();a.recorder=new RawRecorder(a.journal);a.source='serial';a.connected=true;a.parser.protocol='binary';
+ await a.start({subjectCode:'DISPLAY_TEST'});
+ const bytes=Uint8Array.from(Array.from({length:6000},()=>[...encodeBinary(450,512)]).flat());a.ingest(bytes,12000);
+ const plot=a.plot.array(),last=plot.at(-1);assert.equal(last.p,450);assert.equal(last.e,512);assert.ok(last.warm);
+ assert.ok(Math.abs(last.pf)<1e-5);assert.ok(Math.abs(last.ef)<1e-5);assert.equal(a.snapshot(12000).ok,false);
+ assert.ok(plot.every(v=>Number.isFinite(v.pf)&&Number.isFinite(v.ef)));
+ await a.recorder.stop();const parts=await a.recorder.packageParts(),csv=await new Blob(parts.csv).text();
+ assert.equal(csv.trim().split('\r\n').length,6000);assert.ok(csv.trim().split('\r\n').every(line=>line.split(',')[5]==='450'&&line.split(',')[6]==='512'));
+ assert.deepEqual(new Uint8Array(await new Blob(parts.raw).arrayBuffer()),bytes);
+ const segment=last.segment;a.ingest(Uint8Array.from(Array.from({length:5},()=>[...encodeBinary(700,800)]).flat()),13000);
+ const restarted=a.plot.array().at(-1);assert.ok(restarted.segment>segment);assert.equal(restarted.warm,false);assert.ok(Math.abs(restarted.pf)<1e-5);assert.ok(Math.abs(restarted.ef)<1e-5);
+});
 test('raw recorder preserves bytes and ADC through chunk flush and final partial block',async()=>{
  const j=new MemoryJournal(),r=new RawRecorder(j);await r.start({startedAt:1000,source:'serial'});const expected=[];
  for(let n=0;n<1100;n++){const [p,e]=syntheticSample(n),b=encodeBinary(p,e);expected.push(...b);r.addBytes(b);b.fill(0);r.addSample(p,e,1000+n*2,{phase:n<500?'baseline':'exercise1',interference:n>900,qualityState:'fail'},1);if(n===500)await r.flush();}

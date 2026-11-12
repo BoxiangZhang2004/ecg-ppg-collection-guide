@@ -1,3 +1,6 @@
+// scipy.signal.butter(2, [.5, 8 or 40], btype='bandpass', fs=500).
+// N=2 is the Butterworth prototype order; each bandpass uses two SOS (order 4).
+// ECG additionally uses iirnotch(50, 30, fs=500). Display and quality share these filters.
 export default {
   "fs": 500,
   "ppg": [
