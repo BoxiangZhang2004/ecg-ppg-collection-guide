@@ -31,7 +31,7 @@ export function newState(now = Date.now()) {
   return {
     version: PROTOCOL_VERSION, createdAt: now, mode: 'setup', subject: '', subjectName: '', operator: '',
     preStart: null, preEnd: null, startAt: null, endAt: null, index: 0, lastTick: null,
-    recordingStartConfirmed: null, recordingStopConfirmed: null, skips: [],
+    recordingStartConfirmed: null, recordingStopConfirmed: null, skips: [], rawSessionId: null, qualityAutomatic: false,
     phases: BASE_PHASES.map(p => ({...p, extra: 0, actualStart: null, actualEnd: null})),
     quality: LABELS.map(() => ({since: null, confirmedAt: null, unstable: false})),
     measurements: LABELS.map(label => ({label, pressedAt: null, pressConfirmedAt: null, deflatedAt: null, temperature: null, temperatureAt: null, verifiedAt: null, bpSkippedAt: null, temperatureSkippedAt: null, deflationSkippedAt: null, temperaturePromptAt: null})),
@@ -78,7 +78,17 @@ export class ProtocolEngine {
   }
   validSeconds(now) {
     const p = this.current(), q = this.s.quality[p.round];
+    if(p.kind==='quality'&&q.automatic&&(!q.latestQualityOk||this.elapsed(now)-(q.lastQualityCheck??-Infinity)>1))return 0;
     return p.kind === 'quality' && q.since !== null && !q.unstable ? Math.max(0, this.elapsed(now) - q.since) : 0;
+  }
+  applySignalQuality(result, now) {
+    if(!this.s.qualityAutomatic||this.s.mode!=='running'||this.current().kind!=='quality')return;
+    const q=this.s.quality[this.current().round],t=this.elapsed(now);
+    q.automatic=true;q.latestQualityOk=!!result.ok;q.lastQualityCheck=t;q.automaticReason=result.reason;
+    if(q.manualUnstable)return;
+    if(!result.ok){
+      if(q.since!==null||!q.unstable||q.confirmedAt!==null){q.since=null;q.unstable=true;q.confirmedAt=null;this.log('automatic_quality_rejected',{round:this.current().round,reason:result.reason},now);}
+    }else if(q.since===null||q.unstable){q.since=t;q.unstable=false;q.confirmedAt=null;this.log('automatic_valid_count_started',{round:this.current().round},now);}
   }
   blockers(now) {
     const p = this.current(), t = this.elapsed(now), reasons = [];
@@ -86,7 +96,7 @@ export class ProtocolEngine {
     if (p.kind === 'quality') {
       const q = this.s.quality[p.round];
       if (q.unstable || q.since === null) reasons.push('等待信号恢复稳定，再重新计满 80 秒');
-      else if (t - q.since < 80) reasons.push(`有效波形还需 ${Math.ceil(80 - (t - q.since))} 秒`);
+      else if (this.validSeconds(now) < 80) reasons.push(`有效波形还需 ${Math.ceil(80 - this.validSeconds(now))} 秒`);
       if (q.confirmedAt === null) reasons.push('等待操作者核验连续 80 秒有效波形');
       if (p.round > 0) {
         const previous = this.s.measurements[p.round - 1];
@@ -186,13 +196,13 @@ export class ProtocolEngine {
   markUnstable(now) {
     if (this.s.mode !== 'running' || this.current().kind !== 'quality') return false;
     const q = this.s.quality[this.current().round];
-    q.unstable = true; q.since = null; q.confirmedAt = null;
+    q.unstable = true; q.since = null; q.confirmedAt = null; q.manualUnstable = true;
     this.log('signal_unstable', {round: this.current().round}, now); return true;
   }
   restartQuality(now) {
     if (this.s.mode !== 'running' || this.current().kind !== 'quality') return false;
     const q = this.s.quality[this.current().round];
-    q.unstable = false; q.since = this.elapsed(now); q.confirmedAt = null;
+    q.unstable = false; q.since = this.elapsed(now); q.confirmedAt = null; q.manualUnstable = false;
     this.log('signal_stable_restart_80s', {round: this.current().round}, now); return true;
   }
   confirmQuality(now) {
@@ -260,6 +270,7 @@ export class ProtocolEngine {
       recordingStartConfirmed: s.recordingStartConfirmed ?? null,
       recordingStopConfirmed: s.recordingStopConfirmed ?? null,
       hasSkippedSteps: s.skips.length > 0, skippedSteps: s.skips,
+      rawSessionId: s.rawSessionId ?? null, qualityAutomatic: s.qualityAutomatic,
       minimumBpIntervalSeconds: s.minBpInterval,
       prechecks: s.prechecks, measurements: s.measurements,
       validWaveformManualChecks: s.quality, phases: this.schedule(now),

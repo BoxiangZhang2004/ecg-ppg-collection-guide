@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff">
-<meta name="description" content="ECG、PPG 采集内部计时工具。全屏操作提示、运动节拍、加时与测量确认。">
-<title>采集计时</title><link rel="icon" href="./icon.svg"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./style.css?v=3.1">
+<meta name="description" content="ECG、PPG 原始数据采集、质量初筛与18分钟流程引导。">
+<title>采集计时</title><link rel="icon" href="./icon.svg"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./style.css?v=4">
 </head>
 <body>
 <header id="header"><div class="identity-group"><div id="identity">ECG / PPG 采集</div><small id="skip-status" hidden>含跳过</small></div><div id="elapsed-label">尚未开录</div><div class="header-controls"><button id="skip-button" data-action="skip" aria-label="跳过当前步骤" title="跳过当前步骤" hidden>跳过</button><button data-action="fullscreen" aria-label="全屏">全屏</button><button data-action="menu" aria-label="更多操作">更多</button></div></header>
@@ -12,17 +12,23 @@
 <main id="main">
 <section id="setup" class="setup">
 <h1>开始采集</h1><form id="subject-form"><label>受试者姓名<input id="subject-name" maxlength="40" autocomplete="off" required></label><label>受试者编号<input id="subject-code" maxlength="40" autocomplete="off" required></label><button type="submit" class="primary" id="start-button">开始 3 分 30 秒静坐</button></form>
-<p>开录前静坐 3 分 30 秒，之后连续记录 18 分钟。<br>请先完成佩戴、知情同意及设备试录检查。</p>
+<p>先连接采集板，查看下面的原始波形。<br>开录前静坐 3 分 30 秒，之后在本页开始记录。</p>
 </section>
 <section id="current" class="current" hidden>
 <div id="phase-label" class="phase-label"></div><h1 id="instruction"></h1><div id="remaining" class="remaining"></div><p id="detail" class="detail"></p><div id="action" class="action"></div><div id="next-hint" class="next-hint"></div>
 </section>
-<section id="exercise" class="exercise" hidden aria-label="全屏坐姿踏步节拍器"><div class="exercise-top"><b id="exercise-round">第 1 次坐姿踏步</b><span>剩余 <strong id="exercise-remaining">40</strong> 秒</span></div><div class="step-panels"><div id="left-panel" class="step-panel active"><strong>左</strong><span>抬左脚</span></div><div id="right-panel" class="step-panel"><strong>右</strong><span>抬右脚</span></div></div><div class="exercise-bottom"><b id="beat-word">抬左脚</b><span>90 步/分钟 · 坐姿交替抬脚 · 上身保持稳定</span><span id="beat-count">1 / 60</span></div></section>
-<section id="summary" class="summary" hidden><h1 id="summary-title">采集结束</h1><p id="summary-identity"></p><p id="summary-time"></p><div class="summary-table"><table><thead><tr><th>测量</th><th>血压按键</th><th>完全放气</th><th>额温</th></tr></thead><tbody id="summary-rows"></tbody></table></div><p class="summary-note">请核对原始波形、血压计导出结果，并备份。</p><div class="summary-buttons"><button data-action="export-csv" class="primary">导出 CSV</button><button data-action="export-json">导出完整记录</button><button data-action="new-session">下一位受试者</button></div></section>
+<section id="exercise" class="exercise" hidden aria-label="全屏坐姿踏步节拍器"><div class="exercise-top"><b id="exercise-round">第 1 次坐姿踏步</b><span>剩余 <strong id="exercise-remaining">40</strong> 秒</span></div><div class="step-panels"><div id="left-panel" class="step-panel active"><strong>左</strong><span>抬左脚</span></div><div id="right-panel" class="step-panel"><strong>右</strong><span>抬右脚</span></div></div><div class="exercise-bottom"><b id="beat-word">抬左脚</b><span id="exercise-recording">90 步/分钟 · 原始数据持续保存</span><span id="beat-count">1 / 60</span></div></section>
+<section id="summary" class="summary" hidden><h1 id="summary-title">采集结束</h1><p id="summary-identity"></p><p id="summary-time"></p><div class="summary-table"><table><thead><tr><th>测量</th><th>血压按键</th><th>完全放气</th><th>额温</th></tr></thead><tbody id="summary-rows"></tbody></table></div><p class="summary-note">请核对原始波形、血压计导出结果，并备份。</p><div class="summary-buttons"><button data-action="export-raw" class="primary">导出原始采集包</button><button data-action="export-csv">操作记录 CSV</button><button data-action="export-json">操作记录 JSON</button><button data-action="new-session">下一位受试者</button></div></section>
 </main>
-<footer id="delay-bar" hidden><div class="delay-row"><b>加时</b><button data-action="extend" data-seconds="5">+5 秒</button><button data-action="extend" data-seconds="10">+10 秒</button><button data-action="extend" data-seconds="30">+30 秒</button><button data-action="extend" data-seconds="60">+60 秒</button><div class="custom-delay"><input id="extra-seconds" type="number" min="1" max="3600" value="20" aria-label="自定义加时秒数"><span>秒</span><button data-action="extend-custom">加时</button></div><button id="signal-button" data-action="unstable">信号不稳，重计 80 秒</button><button id="hold-button" data-action="hold">保持当前</button></div><div id="delay-note" class="delay-note">加时后，后续时间一起顺延；采集软件保持连续保存。</div></footer>
-<div id="menu" class="menu" hidden><button data-action="test-audio">试听节拍 / 口令</button><label><input id="sound" type="checkbox" checked> 提示音</label><label><input id="voice" type="checkbox" checked> 左右语音口令</label><button data-action="export-csv">导出 CSV</button><button data-action="export-json">导出完整记录</button><button data-action="abort" class="danger">提前终止</button><button data-action="new-session">新受试者</button><button data-action="close-menu">关闭</button></div>
+<section id="acquisition-panel" class="acquisition-panel" aria-label="原始 ECG PPG 数据采集">
+<div class="capture-toolbar"><button id="connect-button" data-action="connect">连接采集板</button><strong id="capture-state">未连接</strong><span id="raw-counter">尚未开始保存</span><button id="export-raw-button" data-action="export-raw" disabled>导出原始采集包</button></div>
+<div class="quality-line"><strong id="quality-overall">等待原始数据</strong><span id="receive-info">115200 baud · 自动识别协议</span></div>
+<div class="raw-plots"><div><div class="plot-label"><b>ECG 原始 ADC</b><span id="ecg-quality">判断中</span></div><canvas id="ecg-raw" aria-label="ECG 原始波形"></canvas></div><div><div class="plot-label"><b>PPG 原始 ADC</b><span id="ppg-quality">判断中</span></div><canvas id="ppg-raw" aria-label="PPG 原始波形"></canvas></div></div>
+<div id="raw-notice" class="raw-notice">真实采集请用电脑 Chrome，关闭占用串口的旧采集窗口。只保存原始数据；质量判断为工程初筛。</div>
+</section>
+<footer id="delay-bar" hidden><div class="delay-row"><b>加时</b><button data-action="extend" data-seconds="5">+5 秒</button><button data-action="extend" data-seconds="10">+10 秒</button><button data-action="extend" data-seconds="30">+30 秒</button><button data-action="extend" data-seconds="60">+60 秒</button><div class="custom-delay"><input id="extra-seconds" type="number" min="1" max="3600" value="20" aria-label="自定义加时秒数"><span>秒</span><button data-action="extend-custom">加时</button></div><button id="signal-button" data-action="unstable">信号不稳，重计 80 秒</button><button id="hold-button" data-action="hold">保持当前</button></div><div id="delay-note" class="delay-note">加时后，后续时间一起顺延；原始数据始终连续保存。</div></footer>
+<div id="menu" class="menu" hidden><button data-action="demo-signal">演示信号（合成数据）</button><button data-action="raw-history">本机原始记录</button><button data-action="test-audio">试听节拍 / 口令</button><label><input id="sound" type="checkbox" checked> 提示音</label><label><input id="voice" type="checkbox" checked> 左右语音口令</label><button data-action="export-raw">导出原始采集包</button><button data-action="export-csv">导出操作记录 CSV</button><button data-action="export-json">导出操作记录 JSON</button><button data-action="abort" class="danger">提前终止</button><button data-action="new-session">新受试者</button><button data-action="close-menu">关闭</button></div>
 <div id="toast" class="toast" role="status" hidden></div><div id="announcer" class="sr-only" aria-live="polite"></div>
 <dialog id="dialog"><form method="dialog"><h2 id="dialog-title"></h2><div id="dialog-content"></div><div class="dialog-buttons"><button value="cancel">取消</button><button id="dialog-confirm" value="confirm" class="primary">确认</button></div></form></dialog>
-<script type="module" src="./app.mjs?v=3.1"></script>
+<script type="module" src="./app.mjs?v=4"></script>
 </body></html>
