@@ -65,6 +65,16 @@ test('raw recorder preserves bytes and ADC through chunk flush and final partial
 test('storage failure is visible, stops recording and keeps the unsaved chunk exportable',async()=>{
  const j=new MemoryJournal(),faults=[],r=new RawRecorder(j,e=>faults.push(e));await r.start({startedAt:0,source:'serial'});r.addBytes(encodeBinary(123,456));r.addSample(123,456,2,{phase:'baseline',interference:false,qualityState:'pass'},1);j.fail=true;await r.flush();assert.equal(r.recording,false);assert.equal(faults.length,1);const p=await r.packageParts();assert.equal(p.metadata.unsavedChunksIncluded,1);assert.ok((await new Blob(p.csv).text()).includes(',123,456,'));assert.equal(new Blob(p.raw).size,6);
 });
+test('a pending final write cannot stop or overwrite the next participant session',async()=>{
+ let release;const gate=new Promise(resolve=>release=resolve),sessions=new Map();let n=0;
+ const journal={async create(meta){const s={...meta,id:String(++n),frames:0,status:'recording'};sessions.set(s.id,s);return s;},async append(c){await gate;sessions.get(c.sessionId).frames+=c.frames;},async update(id,patch){await Promise.resolve();Object.assign(sessions.get(id),patch);}};
+ const r=new RawRecorder(journal),a=await r.start({startedAt:0,subjectCode:'A'});
+ r.addSample(123,456,2,{phase:'baseline',interference:false,qualityState:'pass'},1);
+ const stopping=r.stop({flow:{subjectCode:'A'}}),starting=r.start({startedAt:10,subjectCode:'B'});
+ await Promise.resolve();assert.equal(r.session.id,a.id);release();await stopping;const b=await starting;
+ assert.equal(sessions.get(a.id).status,'stopped');assert.equal(sessions.get(a.id).frames,1);assert.equal(sessions.get(a.id).flow.subjectCode,'A');
+ assert.equal(sessions.get(b.id).status,'recording');assert.equal(sessions.get(b.id).flow,undefined);assert.equal(r.frames,0);
+});
 test('switching preview sources after stopping cannot relabel a saved raw recording',async()=>{
  const a=new Acquisition();a.journal=new MemoryJournal();a.recorder=new RawRecorder(a.journal);a.source='serial';a.connected=true;a.parser.protocol='text';
  const session=await a.start({subjectName:'A',subjectCode:'A001'});

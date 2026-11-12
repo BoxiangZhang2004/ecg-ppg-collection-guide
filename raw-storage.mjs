@@ -39,6 +39,7 @@ export class RawRecorder {
   resetBuffers(){this.lines=[];this.bytes=[];this.quality=[];this.bufferFrames=0;this.bufferBytes=0;this.lastReceivedAt=null;this.lastSegment=null;}
   async start(meta){
     if(this.recording)throw new Error('已有采集正在保存');
+    await this.queue;
     this.session=await this.journal.create(meta);this.frames=0;this.savedFrames=0;this.rawBytes=0;this.chunkIndex=0;this.unsaved=[];this.unsavedExported=false;this.fault=null;this.queue=Promise.resolve();this.resetBuffers();this.recording=true;return this.session;
   }
   async resume(id){
@@ -64,8 +65,8 @@ export class RawRecorder {
       try{await this.journal.append(chunk);this.savedFrames+=chunk.frames;}catch(error){this.fault=error;this.unsaved.push(chunk);this.recording=false;this.onFault(error);}
     });return this.queue;
   }
-  async checkpoint(patch){if(this.session&&!this.fault){await this.flush();if(!this.fault)await this.journal.update(this.session.id,patch);}}
-  async stop(patch){this.recording=false;await this.flush();if(!this.fault)await this.journal.update(this.session.id,{...patch,status:'stopped'});}
+  async checkpoint(patch){const id=this.session?.id;if(id&&!this.fault){await this.flush();if(!this.fault)await this.journal.update(id,patch);}}
+  async stop(patch){const id=this.session?.id;if(!id)return;this.recording=false;await this.flush();if(!this.fault)await this.journal.update(id,{...patch,status:'stopped'});}
   async packageParts(id=this.session?.id){
     if(!id)throw new Error('还没有原始数据记录');
     if(id===this.session?.id)await this.flush();

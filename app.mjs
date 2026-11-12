@@ -1,5 +1,5 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4';
-import {Acquisition} from './acquisition.mjs?v=4';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.1';
+import {Acquisition} from './acquisition.mjs?v=4.1';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let engine=new ProtocolEngine(),audio,lock,renderKey='',lastRender=0,lastSave=0,lastBeat=-1,lastTask='',tempReview=null,tempDraft={},dialogCallback,backgroundAt=null;
@@ -64,9 +64,9 @@ function render(now){
  $('acquisition-panel').hidden=isExercise;
  const rec=capture.recorder;
  $('capture-state').textContent=capture.source==='synthetic'?'演示：合成数据':capture.connected?'串口已连接':'未连接采集板';
- $('connect-button').textContent=capture.connecting?'连接中…':capture.port?'断开设备':'连接采集板';$('connect-button').disabled=capture.connecting;
- $('raw-counter').textContent=rec.fault?'保存失败，原始记录已停止':rec.recording?`正在保存 · 已写入 ${(rec.savedFrames||0).toLocaleString()} / 已接收 ${rec.frames.toLocaleString()} 帧`:rec.session?`${s.rawSessionId===rec.session.id?'已停止':'上次记录'} · ${(rec.savedFrames||0).toLocaleString()} 帧`:recoveredRaw?`本机保留 ${recoveredRaw.frames.toLocaleString()} 帧，连接后可恢复或导出`:'当前为预览，尚未开始保存';
- $('export-raw-button').disabled=exportBusy||!(s.rawSessionId||recoveredRaw);$('export-raw-button').textContent=exportBusy?'正在打包…':'导出原始采集包';
+ $('connect-button').textContent=capture.connecting?'连接中…':capture.port?'断开设备':'连接采集板';$('connect-button').disabled=capture.connecting||recordingBusy;
+ $('raw-counter').textContent=rec.fault?'保存失败，原始记录已停止':recordingBusy&&!rec.recording?(s.mode==='ready'?'正在准备本机保存…':'正在完成本机保存…'):rec.recording?`正在保存 · 已写入 ${(rec.savedFrames||0).toLocaleString()} / 已接收 ${rec.frames.toLocaleString()} 帧`:rec.session?`${s.rawSessionId===rec.session.id?'已停止':'上次记录'} · ${(rec.savedFrames||0).toLocaleString()} 帧`:recoveredRaw?`本机保留 ${recoveredRaw.frames.toLocaleString()} 帧，连接后可恢复或导出`:'当前为预览，尚未开始保存';
+ $('export-raw-button').disabled=recordingBusy||exportBusy||!(s.rawSessionId||recoveredRaw);$('export-raw-button').textContent=exportBusy?'正在打包…':'导出原始采集包';document.querySelectorAll('[data-action="export-raw"],[data-action="new-session"]').forEach(el=>{if(el.id!=='export-raw-button')el.disabled=recordingBusy||exportBusy;});
  const interference=rec.recording&&capture.context().interference;
  $('quality-overall').textContent=interference&&!rec.fault?'测压干扰期：原始数据保留，不计入有效段':signalState.reason+(capture.source==='synthetic'?'（合成数据）':'');$('quality-overall').className=interference?'quality-waiting':'quality-'+signalState.status;
  for(const kind of ['ecg','ppg']){$(kind+'-quality').textContent=signalState[kind]?.reason||'判断中';$(kind+'-quality').className=signalState[kind]?.ok?'quality-pass':signalState.status==='waiting'?'quality-waiting':'quality-fail';}
@@ -119,11 +119,14 @@ async function startRaw(skipped=false){
  }finally{recordingBusy=false;changed();}
 }
 async function resumeFlow(){
- if(capture.recorder.fault)throw new Error('本机保存失败，请先导出原始采集包，再新建记录');
- if(engine.s.rawSessionId){if(!capture.connected||!capture.parser.protocol)throw new Error('请先连接设备并等待有效数据');if(!capture.recorder.recording)await capture.resume(engine.s.rawSessionId);if(capture.monitor.lastReceived===null||Date.now()-capture.monitor.lastReceived>500)throw new Error('数据流尚未恢复，请检查设备');}
- engine.resume(Date.now());wake();changed();
+ if(recordingBusy)return;recordingBusy=true;
+ try{
+  if(capture.recorder.fault)throw new Error('本机保存失败，请先导出原始采集包，再新建记录');
+  if(engine.s.rawSessionId){if(!capture.connected||!capture.parser.protocol)throw new Error('请先连接设备并等待有效数据');if(!capture.recorder.recording)await capture.resume(engine.s.rawSessionId);if(capture.monitor.lastReceived===null||Date.now()-capture.monitor.lastReceived>500)throw new Error('数据流尚未恢复，请检查设备');}
+  engine.resume(Date.now());wake();
+ }finally{recordingBusy=false;changed();}
 }
-async function stopRaw(){const id=engine.s.rawSessionId;if(!id)return;const flow=engine.report();if(capture.recorder.session?.id===id)await capture.finish(flow);else await capture.journal.update(id,{endedAt:flow.endedAt,status:'stopped',flow,hadUnrecordedPageGap:true});changed();}
+async function stopRaw(){const id=engine.s.rawSessionId;if(!id)return;const flow=engine.report();recordingBusy=true;try{if(capture.recorder.session?.id===id)await capture.finish(flow);else await capture.journal.update(id,{endedAt:flow.endedAt,status:'stopped',flow,hadUnrecordedPageGap:true});}finally{recordingBusy=false;changed();}}
 async function downloadRaw(id=engine.s.rawSessionId||recoveredRaw?.id){
  if(!id)throw new Error('当前流程尚无原始记录，上次采集可在“本机原始记录”导出');
  if(exportBusy)return;exportBusy=true;changed();
@@ -166,7 +169,7 @@ $('subject-name').addEventListener('input',()=>{engine.s.subjectName=$('subject-
 $('action').addEventListener('input',e=>{if(e.target.id==='temperature')tempDraft[engine.current().round]=e.target.value;});
 for(const id of ['sound','voice'])$(id).addEventListener('change',()=>{try{localStorage.setItem(PREFS,JSON.stringify({sound:$('sound').checked,voice:$('voice').checked}));}catch{}if(!$('voice').checked&&'speechSynthesis'in window)speechSynthesis.cancel();});
 document.addEventListener('click',async e=>{
- const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,now=Date.now(),p=engine.current(),s=engine.s;
+ const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,now=Date.now(),p=engine.current(),s=engine.s;if(recordingBusy&&!['fullscreen','menu','close-menu'].includes(a))return;
  try{switch(a){
  case 'connect':await capture.connect();changed();break;
  case 'demo-signal':$('menu').hidden=true;await capture.demo();changed();break;
