@@ -1,5 +1,5 @@
-const CACHE='ecg-ppg-guide-20261112-v3';
-const ASSETS=['./','./index.html','./style.css','./app.mjs','./engine.mjs','./icon.svg','./manifest.webmanifest'];
+const CACHE='ecg-ppg-guide-20261112-v3.1';
+const ASSETS=['./','./index.html','./style.css?v=3.1','./app.mjs?v=3.1','./engine.mjs?v=3.1','./icon.svg','./manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('ecg-ppg-guide-')&&key!==CACHE).map(key=>caches.delete(key))))));
 self.addEventListener('fetch',event=>{

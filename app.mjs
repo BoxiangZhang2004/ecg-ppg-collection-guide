@@ -1,4 +1,4 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=3.1';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let engine=new ProtocolEngine(),audio,lock,renderKey='',lastRender=0,lastSave=0,lastBeat=-1,lastTask='',tempReview=null,tempDraft={},dialogCallback,backgroundAt=null;
