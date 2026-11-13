@@ -65,7 +65,7 @@ export class ProtocolEngine {
   }
   phaseTarget() {
     const p = this.current();
-    let target = p.actualStart + p.duration + p.extra;
+    let target = p.actualStart + p.duration + (p.kind === 'exercise' ? 0 : p.extra);
     if (p.kind === 'measure') {
       const m = this.s.measurements[p.round];
       if (m.pressedAt !== null) target = Math.max(target, m.pressedAt + 60);
@@ -182,6 +182,19 @@ export class ProtocolEngine {
   }
   hold(kind, reason, now) {
     if (this.s.mode !== 'running' || this.s.hold) return false;
+    const p = this.current();
+    if (p.kind === 'exercise' && ['data', 'connection', 'signal', 'quality'].includes(kind)) {
+      // A signal fault must never turn the fixed exercise into a held phase.
+      // Keep the warning visible and auditable; the next resting phase still
+      // requires a live stream and its normal quality checks.
+      p.signalWarnings ??= [];
+      if (!p.signalWarnings.some(w => w.kind === kind && w.reason === reason)) {
+        const warning = {kind, reason, elapsed: this.elapsed(now)};
+        p.signalWarnings.push(warning);
+        this.log('exercise_signal_warning_no_extension', {phase: p.id, ...warning}, now);
+      }
+      return false;
+    }
     this.s.hold = {kind, reason, since: this.elapsed(now)};
     this.log('hold_started', {kind, reason}, now); return true;
   }
@@ -243,7 +256,7 @@ export class ProtocolEngine {
     const active = ['running', 'await-finish', 'completed', 'aborted'].includes(this.s.mode);
     return this.s.phases.map((p, i) => {
       const start = p.actualStart ?? cursor;
-      let end = p.actualEnd ?? (start + p.duration + p.extra);
+      let end = p.actualEnd ?? (start + p.duration + (p.kind === 'exercise' ? 0 : p.extra));
       if (active && i === this.s.index && p.actualEnd === null) {
         end = Math.max(end, this.phaseTarget(), this.elapsed(now));
         if (p.kind === 'quality') {
@@ -271,6 +284,7 @@ export class ProtocolEngine {
       recordingStopConfirmed: s.recordingStopConfirmed ?? null,
       hasSkippedSteps: s.skips.length > 0, skippedSteps: s.skips,
       rawSessionId: s.rawSessionId ?? null, qualityAutomatic: s.qualityAutomatic,
+      exerciseSignalPolicy: {qualityAction: 'mark_and_save', extendOnPoorQuality: false, extendOnDataLoss: false},
       minimumBpIntervalSeconds: s.minBpInterval,
       prechecks: s.prechecks, measurements: s.measurements,
       validWaveformManualChecks: s.quality, phases: this.schedule(now),

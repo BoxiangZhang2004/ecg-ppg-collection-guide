@@ -1,4 +1,4 @@
-export const ONLINE_URL='https://boxiangzhang2004.github.io/ecg-ppg-collection-guide/?v=4.4';
+export const ONLINE_URL='https://boxiangzhang2004.github.io/ecg-ppg-collection-guide/?v=4.5';
 
 export function detectSerialSupport(env=globalThis){
   if(env.location?.protocol==='file:')return {supported:false,code:'local-file',message:'请打开在线版采集网页，并使用电脑 Chrome 连接采集板。'};

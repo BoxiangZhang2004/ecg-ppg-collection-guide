@@ -1,6 +1,6 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.4';
-import {Acquisition} from './acquisition.mjs?v=4.4';
-import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.4';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.5';
+import {Acquisition} from './acquisition.mjs?v=4.5';
+import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.5';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const serialSupport=detectSerialSupport();
 $('browser-warning').hidden=serialSupport.supported;$('browser-warning-reason').textContent=serialSupport.message;
@@ -71,7 +71,7 @@ function render(now){
  $('raw-counter').textContent=rec.fault?'保存失败，原始记录已停止':recordingBusy&&!rec.recording?(s.mode==='ready'?'正在准备本机保存…':'正在完成本机保存…'):rec.recording?`正在保存 · 已写入 ${(rec.savedFrames||0).toLocaleString()} / 已接收 ${rec.frames.toLocaleString()} 帧`:rec.session?`${s.rawSessionId===rec.session.id?'已停止':'上次记录'} · ${(rec.savedFrames||0).toLocaleString()} 帧`:recoveredRaw?`本机保留 ${recoveredRaw.frames.toLocaleString()} 帧，连接后可恢复或导出`:'当前为预览，尚未开始保存';
  $('export-raw-button').disabled=recordingBusy||exportBusy||!(s.rawSessionId||recoveredRaw);$('export-raw-button').textContent=exportBusy?'正在打包…':'导出原始采集包';document.querySelectorAll('[data-action="export-raw"],[data-action="new-session"]').forEach(el=>{if(el.id!=='export-raw-button')el.disabled=recordingBusy||exportBusy;});
  const interference=rec.recording&&capture.context().interference;
- $('quality-overall').textContent=interference&&!rec.fault?'测压干扰期：原始数据保留，不计入有效段':(isExercise?'运动中 · ':'')+signalState.reason+(capture.source==='synthetic'?'（合成数据）':'');$('quality-overall').className=interference?'quality-waiting':'quality-'+signalState.status;
+ $('quality-overall').textContent=interference&&!rec.fault?'测压干扰期：原始数据保留，不计入有效段':(isExercise?'运动中 · ':'')+signalState.reason+(isExercise?' · 仅作质量标记，40 秒倒计时继续':'')+(capture.source==='synthetic'?'（合成数据）':'');$('quality-overall').className=interference?'quality-waiting':'quality-'+signalState.status;
  for(const kind of ['ecg','ppg']){$(kind+'-quality').textContent=signalState[kind]?.reason||'判断中';$(kind+'-quality').className=signalState[kind]?.ok?'quality-pass':signalState.status==='waiting'?'quality-waiting':'quality-fail';}
  for(const kind of ['ecg','ppg']){$(kind+'-plot-label').textContent=kind.toUpperCase()+(showRaw?' 原始 ADC':' 滤波（N=2）');$(kind+'-waveform').setAttribute('aria-label',kind.toUpperCase()+(showRaw?' 原始波形':' 滤波波形'));}
  $('waveform-toggle').textContent=showRaw?'显示滤波':'显示原始';$('waveform-toggle').setAttribute('aria-pressed',String(showRaw));

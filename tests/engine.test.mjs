@@ -103,6 +103,39 @@ test('exercise cannot be extended',()=>{
   const e=started();run(e,0,240);assert.equal(e.current().kind,'exercise');
   assert.equal(e.extend(60,'更多时间',at(240)),false);assert.equal(e.current().duration,40);
 });
+test('all three exercise phases end after 40 seconds despite bad quality and signal loss',()=>{
+  for(let round=1;round<=3;round++){
+    const e=started();e.s.qualityAutomatic=true;
+    while(e.current().id!==`exercise${round}`)e.skip(at(0));
+    for(let t=1;t<=40;t++){
+      e.applySignalQuality({ok:false,status:'fail',reason:'ECG 触底，PPG 运动伪迹'},at(t));
+      for(const kind of ['data','connection','signal','quality'])assert.equal(e.hold(kind,'信号不可用',at(t)),false);
+      assert.equal(e.extend(30,'信号不佳',at(t)),false);
+      assert.equal(e.markUnstable(at(t)),false);
+      e.tick(at(t));
+      if(t<40)assert.equal(e.current().id,`exercise${round}`);
+    }
+    const p=e.s.phases.find(p=>p.id===`exercise${round}`);
+    assert.equal(p.actualEnd-p.actualStart,40);assert.equal(p.extra,0);
+    assert.equal(e.current().id,`settle${round}`);assert.equal(e.s.hold,null);
+    assert.equal(p.signalWarnings.length,4);
+    assert.equal(e.s.events.filter(v=>v.type==='exercise_signal_warning_no_extension').length,4);
+    assert.equal(e.s.quality[round].since,null);
+    assert.equal(e.report(at(40)).exerciseSignalPolicy.extendOnPoorQuality,false);
+  }
+});
+test('restored exercise ignores a stale extension in both countdown and schedule',()=>{
+  const e=started();while(e.current().id!=='exercise1')e.skip(at(0));
+  e.current().extra=120;
+  assert.equal(e.phaseTarget(),40);assert.equal(e.schedule(at(0)).find(p=>p.id==='exercise1').end,40);
+  for(let t=1;t<=40;t++)e.tick(at(t));
+  assert.equal(e.current().id,'settle1');assert.equal(e.current().actualStart,40);
+});
+test('signal faults still hold a resting quality phase',()=>{
+  const e=started();assert.equal(e.hold('data','数据断流',at(1)),true);
+  for(let t=1;t<=100;t++)e.tick(at(t));
+  assert.equal(e.current().id,'baseline');assert.equal(e.s.hold.kind,'data');
+});
 test('background suspension holds at current stage without silently skipping exercise',()=>{
   const e=started();run(e,0,240);e.tick(at(500));
   assert.equal(e.current().id,'exercise1');assert.equal(e.s.hold.kind,'attention');
