@@ -1,7 +1,8 @@
-import {AutoFrameParser,SERIAL_CONFIG,encodeBinary} from './serial-protocol.mjs?v=4.3';
-import {QualityMonitor,Ring,QUALITY_RULES} from './signal-quality.mjs?v=4.3';
-import {RawJournal,RawRecorder,CSV_HEADER} from './raw-storage.mjs?v=4.3';
-import {zipStore} from './zip-store.mjs?v=4.3';
+import {AutoFrameParser,SERIAL_CONFIG,encodeBinary} from './serial-protocol.mjs?v=4.4';
+import {QualityMonitor,Ring,QUALITY_RULES} from './signal-quality.mjs?v=4.4';
+import {RawJournal,RawRecorder,CSV_HEADER} from './raw-storage.mjs?v=4.4';
+import {zipStore} from './zip-store.mjs?v=4.4';
+import {detectSerialSupport,serialErrorMessage} from './serial-support.mjs?v=4.4';
 export function syntheticSample(n){const t=n/500,phase=(t*75/60)%1,g=(m,s)=>Math.exp(-.5*((phase-m)/s)**2);return [Math.round(450+70*g(.43,.085)+2*Math.sin(2*Math.PI*3*t)),Math.round(512+150*g(.15,.018)-70*g(.19,.022)+40*Math.sin(2*Math.PI*50*t))];}
 export class Acquisition {
   constructor({context=()=>({phase:'preview',interference:false,qualityState:'waiting'}),onFault=()=>{},onNotice=()=>{}}={}){
@@ -12,14 +13,14 @@ export class Acquisition {
   ingest(bytes,now=Date.now()){this.chunkTime=now;this.recorder.addBytes(bytes);this.parser.push(bytes);}
   async connect(){
     if(this.connecting)return;
-    if(!('serial' in navigator)||!isSecureContext)throw new Error('真实采集请使用电脑 Chrome 的 HTTPS 网页，手机和当前内嵌浏览器可能不支持串口');
+    const support=detectSerialSupport();if(!support.supported){this.onNotice(support.message);throw new Error(support.message);}
     if(this.port&&this.connected){if(this.recorder.recording)throw new Error('记录中请先结束采集，再断开设备');await this.disconnect();return;}
     if(this.recorder.recording&&this.source!=='serial')throw new Error('请先结束当前演示记录，再连接设备');
     this.connecting=true;
     try{
       const port=await navigator.serial.requestPort();await port.open(SERIAL_CONFIG);
       this.stopDemo();this.port=port;this.source='serial';this.connected=true;this.monitor.reset('等待设备原始数据');this.makeParser();this.readTask=this.readLoop(port);this.onNotice('已连接，正在自动识别文本 / 二进制协议');
-    }catch(error){if(error.name==='NotFoundError')throw error;throw new Error('连接失败：'+error.message+'；请关闭旧采集窗口和串口监视器后重试');}finally{this.connecting=false;}
+    }catch(error){const message=serialErrorMessage(error);this.onNotice(message);throw new Error(message,{cause:error});}finally{this.connecting=false;}
   }
   async readLoop(port){
     try{while(port.readable&&this.connected){const reader=port.readable.getReader();this.reader=reader;try{while(true){const {value,done}=await reader.read();if(done)break;if(value)this.ingest(value);}}finally{reader.releaseLock();this.reader=null;}if(!this.closing)break;}}

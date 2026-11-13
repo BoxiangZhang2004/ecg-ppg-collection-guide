@@ -1,6 +1,9 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.3';
-import {Acquisition} from './acquisition.mjs?v=4.3';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.4';
+import {Acquisition} from './acquisition.mjs?v=4.4';
+import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.4';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
+const serialSupport=detectSerialSupport();
+$('browser-warning').hidden=serialSupport.supported;$('browser-warning-reason').textContent=serialSupport.message;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let engine=new ProtocolEngine(),audio,lock,renderKey='',lastRender=0,lastSave=0,lastBeat=-1,lastTask='',tempReview=null,tempDraft={},dialogCallback,backgroundAt=null;
 try{const s=JSON.parse(localStorage.getItem(KEY)||'null');if(s?.version===PROTOCOL_VERSION&&s.phases?.length===19){engine=new ProtocolEngine(s);s.subjectName??='';if(s.mode==='running'){if(!s.hold)engine.hold('attention','页面已恢复，请核对当前状态后继续',Date.now());s.lastTick=Date.now();}}}catch{}
@@ -64,7 +67,7 @@ function render(now){
  $('acquisition-panel').hidden=false;
  const rec=capture.recorder;
  $('capture-state').textContent=capture.source==='synthetic'?'演示：合成数据':capture.connected?'串口已连接':'未连接采集板';
- $('connect-button').textContent=capture.connecting?'连接中…':capture.port?'断开设备':'连接采集板';$('connect-button').disabled=capture.connecting||recordingBusy;
+ $('connect-button').textContent=!serialSupport.supported?'需在电脑 Chrome 连接':capture.connecting?'连接中…':capture.port?'断开设备':'连接采集板';$('connect-button').disabled=!serialSupport.supported||capture.connecting||recordingBusy;$('connect-button').title=serialSupport.message;
  $('raw-counter').textContent=rec.fault?'保存失败，原始记录已停止':recordingBusy&&!rec.recording?(s.mode==='ready'?'正在准备本机保存…':'正在完成本机保存…'):rec.recording?`正在保存 · 已写入 ${(rec.savedFrames||0).toLocaleString()} / 已接收 ${rec.frames.toLocaleString()} 帧`:rec.session?`${s.rawSessionId===rec.session.id?'已停止':'上次记录'} · ${(rec.savedFrames||0).toLocaleString()} 帧`:recoveredRaw?`本机保留 ${recoveredRaw.frames.toLocaleString()} 帧，连接后可恢复或导出`:'当前为预览，尚未开始保存';
  $('export-raw-button').disabled=recordingBusy||exportBusy||!(s.rawSessionId||recoveredRaw);$('export-raw-button').textContent=exportBusy?'正在打包…':'导出原始采集包';document.querySelectorAll('[data-action="export-raw"],[data-action="new-session"]').forEach(el=>{if(el.id!=='export-raw-button')el.disabled=recordingBusy||exportBusy;});
  const interference=rec.recording&&capture.context().interference;
@@ -176,8 +179,9 @@ $('subject-name').addEventListener('input',()=>{engine.s.subjectName=$('subject-
 $('action').addEventListener('input',e=>{if(e.target.id==='temperature')tempDraft[engine.current().round]=e.target.value;});
 for(const id of ['sound','voice'])$(id).addEventListener('change',()=>{try{localStorage.setItem(PREFS,JSON.stringify({sound:$('sound').checked,voice:$('voice').checked}));}catch{}if(!$('voice').checked&&'speechSynthesis'in window)speechSynthesis.cancel();});
 document.addEventListener('click',async e=>{
- const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,now=Date.now(),p=engine.current(),s=engine.s;if(recordingBusy&&!['fullscreen','menu','close-menu'].includes(a))return;
+ const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,now=Date.now(),p=engine.current(),s=engine.s;if(recordingBusy&&!['fullscreen','menu','close-menu','copy-online'].includes(a))return;
  try{switch(a){
+ case 'copy-online':try{await navigator.clipboard.writeText(ONLINE_URL);toast('已复制，请粘贴到电脑 Chrome 打开。');}catch{ask('用电脑 Chrome 打开','<p>请复制此链接到电脑 Chrome：</p><input readonly aria-label="在线采集网址" value="'+esc(ONLINE_URL)+'">','关闭',()=>{});}break;
  case 'connect':await capture.connect();changed();break;
  case 'demo-signal':$('menu').hidden=true;await capture.demo();changed();break;
  case 'toggle-waveform':showRaw=!showRaw;changed();drawWaveforms(now);break;
@@ -213,4 +217,4 @@ window.addEventListener('pagehide',()=>{save();capture.recorder.flush();});windo
 window.addEventListener('storage',e=>{if(e.key===KEY&&engine.s.mode==='running'&&!engine.s.hold){engine.hold('attention','另一标签页修改了记录，请仅用一个页面',Date.now());changed();}});
 render(Date.now());save();
 setInterval(()=>{const now=Date.now();if(now-lastSignalCheck>=100){signalState=capture.snapshot(now);engine.applySignalQuality({...signalState,ok:signalState.ok&&capture.recorder.recording&&capture.recorder.frames>0,reason:capture.recorder.recording?signalState.reason:'尚未保存原始数据'},now);lastSignalCheck=now;}capture.tick(now,signalState);if(capture.recorder.recording&&engine.s.mode==='running'&&capture.monitor.lastReceived!==null&&now-capture.monitor.lastReceived>1000)engine.hold('data','数据断流，请检查设备',now);const transition=engine.tick(now);if(transition){lastBeat=-1;save();if(transition==='await-finish'){tone(880,.15);speak('现在确认恢复并停止记录');}}if(now-lastRender>=100||transition){render(now);lastRender=now;}if(now-lastPlot>=100){drawWaveforms(now);lastPlot=now;}beat(now);if(now-lastSave>=1000){save();lastSave=now;}},50);
-if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if(location.protocol!=='file:'&&'serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});

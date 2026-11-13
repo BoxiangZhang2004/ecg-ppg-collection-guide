@@ -3,15 +3,18 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff">
 <meta name="description" content="ECG、PPG 原始数据采集、质量初筛与18分钟流程引导。">
-<title>采集计时</title><link rel="icon" href="./icon.svg"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./style.css?v=4.3">
+<title>采集计时</title><link rel="icon" href="./icon.svg"><link rel="manifest" href="./manifest.webmanifest"><link rel="stylesheet" href="./style.css?v=4.4">
 </head>
 <body>
+<div id="startup-warning" class="startup-warning" role="status"><span id="startup-message">正在启动采集工具。若长时间没有响应，请打开在线版。</span><a href="https://boxiangzhang2004.github.io/ecg-ppg-collection-guide/?v=4.4">打开在线版</a></div>
+<noscript><div class="startup-warning">需要启用 JavaScript 才能运行采集工具。</div></noscript>
 <header id="header"><div class="identity-group"><div id="identity">ECG / PPG 采集</div><small id="skip-status" hidden>含跳过</small></div><div id="elapsed-label">尚未开录</div><div class="header-controls"><button id="skip-button" data-action="skip" aria-label="跳过当前步骤" title="跳过当前步骤" hidden>跳过</button><button data-action="fullscreen" aria-label="全屏">全屏</button><button data-action="menu" aria-label="更多操作">更多</button></div></header>
 <div id="storage-warning" class="warning" hidden>本机保存不可用，请在结束时导出记录。</div>
 <div id="attention" class="warning" hidden></div>
+<div id="browser-warning" class="startup-warning" role="status" hidden><span id="browser-warning-reason"></span><button data-action="copy-online">复制 Chrome 链接</button></div>
 <main id="main">
 <section id="setup" class="setup">
-<h1>开始采集</h1><form id="subject-form"><label>受试者姓名<input id="subject-name" maxlength="40" autocomplete="off" required></label><label>受试者编号<input id="subject-code" maxlength="40" autocomplete="off" required></label><button type="submit" class="primary" id="start-button">开始 3 分 30 秒静坐</button></form>
+<h1>开始采集</h1><form id="subject-form" onsubmit="return false"><label>受试者姓名<input id="subject-name" maxlength="40" autocomplete="off" required></label><label>受试者编号<input id="subject-code" maxlength="40" autocomplete="off" required></label><button type="submit" class="primary" id="start-button">开始 3 分 30 秒静坐</button></form>
 <p>先连接采集板，查看下面的波形。<br>开录前静坐 3 分 30 秒，之后在本页开始记录。</p>
 </section>
 <section id="current" class="current" hidden>
@@ -31,5 +34,5 @@
 <div id="menu" class="menu" hidden><button data-action="demo-signal">演示信号（合成数据）</button><button data-action="raw-history">本机原始记录</button><button data-action="test-audio">试听节拍 / 口令</button><label><input id="sound" type="checkbox" checked> 提示音</label><label><input id="voice" type="checkbox" checked> 左右语音口令</label><button data-action="export-raw">导出原始采集包</button><button data-action="export-csv">导出操作记录 CSV</button><button data-action="export-json">导出操作记录 JSON</button><button data-action="abort" class="danger">提前终止</button><button data-action="new-session">新受试者</button><button data-action="close-menu">关闭</button></div>
 <div id="toast" class="toast" role="status" hidden></div><div id="announcer" class="sr-only" aria-live="polite"></div>
 <dialog id="dialog"><form method="dialog"><h2 id="dialog-title"></h2><div id="dialog-content"></div><div class="dialog-buttons"><button value="cancel">取消</button><button id="dialog-confirm" value="confirm" class="primary">确认</button></div></form></dialog>
-<script type="module" src="./app.mjs?v=4.3"></script>
+<script defer src="./boot.js?v=4.4"></script>
 </body></html>
