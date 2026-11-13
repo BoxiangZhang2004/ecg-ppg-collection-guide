@@ -54,14 +54,13 @@ test('manual extension moves every downstream node, recording clock stays contin
   run(e,11,1110);assert.equal(e.s.mode,'await-finish');assert.equal(e.elapsed(at(1110)),1110);
   assert.deepEqual(e.s.measurements.map(m=>m.pressedAt),[120,420,720,1020]);
 });
-test('unstable signal invalidates confirmation and requires 80 new seconds after recovery',()=>{
+test('manual instability pauses accumulation without deleting earlier good seconds',()=>{
   const e=started();run(e,0,80);assert.notEqual(e.s.quality[0].confirmedAt,null);
   e.markUnstable(at(81));assert.equal(e.s.quality[0].confirmedAt,null);
   for(let t=81;t<=99;t++)e.tick(at(t));assert.equal(e.current().id,'baseline');
-  e.restartQuality(at(100));assert.equal(e.confirmQuality(at(179)),false);
-  for(let t=100;t<=179;t++)e.tick(at(t));
-  assert.equal(e.current().id,'baseline');assert.equal(e.confirmQuality(at(180)),true);
-  e.tick(at(180));assert.equal(e.current().id,'bp0');assert.equal(e.current().actualStart,180);
+  const retained=e.validSeconds(at(99));assert.equal(retained,81);
+  e.restartQuality(at(100));assert.equal(e.validSeconds(at(100)),retained);assert.equal(e.confirmQuality(at(100)),true);
+  e.tick(at(100));assert.equal(e.current().id,'bp0');assert.equal(e.current().actualStart,100);
 });
 test('elapsed time alone cannot approve waveform quality',()=>{
   const e=started();for(let t=0;t<=120;t++)e.tick(at(t));
@@ -131,10 +130,11 @@ test('restored exercise ignores a stale extension in both countdown and schedule
   for(let t=1;t<=40;t++)e.tick(at(t));
   assert.equal(e.current().id,'settle1');assert.equal(e.current().actualStart,40);
 });
-test('signal faults still hold a resting quality phase',()=>{
-  const e=started();assert.equal(e.hold('data','数据断流',at(1)),true);
+test('signal faults in a quality phase are recorded without an indefinite hold',()=>{
+  const e=started();assert.equal(e.hold('data','数据断流',at(1)),false);
   for(let t=1;t<=100;t++)e.tick(at(t));
-  assert.equal(e.current().id,'baseline');assert.equal(e.s.hold.kind,'data');
+  assert.equal(e.current().id,'baseline');assert.equal(e.s.hold,null);
+  assert.ok(e.s.events.some(v=>v.type==='quality_signal_warning_compensated'));
 });
 test('background suspension holds at current stage without silently skipping exercise',()=>{
   const e=started();run(e,0,240);e.tick(at(500));

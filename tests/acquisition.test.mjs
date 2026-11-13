@@ -37,34 +37,34 @@ test('flat channels, missing data and wrong reception rate are not accepted',()=
  const slow=new QualityMonitor();for(let n=0;n<8000;n++){const [p,e]=syntheticSample(n);slow.accept(p,e,n*4+4);}assert.equal(slow.snapshot(32000).ok,false);assert.ok(slow.snapshot(32000).reason.includes('速率'));
 });
 function engine(){const e=new ProtocolEngine(newState(-PRE_REST*1000));e.startPreRest(-PRE_REST*1000);e.tick(0);e.begin(0);e.s.qualityAutomatic=true;return e;}
-test('automatic quality must stay good for 80s; failures reset and cannot be manually overridden',()=>{
+test('automatic quality retains good seconds across failures without clearing the counter',()=>{
  const e=engine();for(let t=0;t<=79;t++){e.applySignalQuality({ok:true,reason:'pass'},t*1000);e.tick(t*1000);}assert.equal(e.confirmQuality(79000),false);
- e.applySignalQuality({ok:false,reason:'PPG 平线'},80000);e.tick(80000);assert.equal(e.s.quality[0].since,null);assert.equal(e.confirmQuality(90000),false);
+ e.applySignalQuality({ok:false,reason:'PPG 平线'},80000);e.tick(80000);assert.equal(e.s.quality[0].since,null);assert.equal(e.validSeconds(80000),80);
  for(let t=81;t<90;t++){e.applySignalQuality({ok:false,reason:'PPG 平线'},t*1000);e.tick(t*1000);}
- for(let t=90;t<170;t++){e.applySignalQuality({ok:true,reason:'pass'},t*1000);e.tick(t*1000);}
- assert.equal(e.confirmQuality(169000),false);e.applySignalQuality({ok:true,reason:'pass'},170000);assert.equal(e.confirmQuality(170000),true);e.tick(170000);assert.equal(e.current().id,'bp0');
+ assert.equal(e.validSeconds(89000),80);e.applySignalQuality({ok:true,reason:'pass'},90000);e.tick(90000);
+ assert.equal(e.confirmQuality(90000),true);e.tick(90000);assert.equal(e.current().id,'bp0');
 });
 test('operator invalidation is respected even if the algorithm currently passes',()=>{
  const e=engine();e.applySignalQuality({ok:true,reason:'pass'},0);e.markUnstable(10000);e.applySignalQuality({ok:true,reason:'pass'},20000);assert.equal(e.s.quality[0].since,null);
  e.restartQuality(21000);e.applySignalQuality({ok:true,reason:'pass'},21000);assert.equal(e.s.quality[0].since,21);
- e.applySignalQuality({ok:false,reason:'fail'},22000);assert.equal(e.validSeconds(22000),0);
+ e.applySignalQuality({ok:false,reason:'fail'},22000);assert.equal(e.validSeconds(22000),1);
 });
-test('signal rejection automatically delays BP and later steps until 80 new good seconds',()=>{
+test('live monitor failures preserve good time and bounded compensation shifts later nodes',()=>{
  const e=engine(),m=new QualityMonitor();let n=0,firstRecovery=null,bpAt=null;
  for(let t=1;t<=185;t++){
   for(let i=0;i<500;i++,n++){const [p,ecg]=syntheticSample(n);m.accept(t>=60&&t<76?500:p,ecg,(t-1)*1000+Math.floor(i/10)*20+20);}
   const q=m.snapshot(t*1000);e.applySignalQuality(q,t*1000);
-  if(t===70){assert.equal(q.ok,false);assert.equal(e.validSeconds(t*1000),0);assert.equal(e.current().id,'baseline');}
+  if(t===70){assert.equal(q.ok,false);assert.ok(e.validSeconds(t*1000)>30);assert.equal(e.current().id,'baseline');}
   if(t>=76&&q.ok&&firstRecovery===null)firstRecovery=t;
   if(e.validSeconds(t*1000)>=80)e.confirmQuality(t*1000);
   e.tick(t*1000);
   if(e.current().id==='bp0'){bpAt=t;break;}
  }
- assert.ok(firstRecovery>76);assert.equal(bpAt,firstRecovery+80);assert.ok(bpAt>90);
+ assert.ok(firstRecovery>76);assert.ok(bpAt<firstRecovery+80);assert.ok(bpAt>90);assert.ok(bpAt<=130);
  assert.ok(e.s.events.some(v=>v.type==='automatic_quality_rejected'&&v.reason.includes('PPG')));
  const schedule=e.schedule(bpAt*1000),exercise=schedule.find(p=>p.id==='exercise1');
  assert.equal(exercise.start,240+bpAt-90);assert.equal(exercise.duration,40);
- assert.match(e.report(bpAt*1000).scope,/重新累计连续 80 秒/);
+ assert.match(e.report(bpAt*1000).scope,/不清零累计/);
 });
 class MemoryJournal{
  constructor(){this.s=null;this.chunks=[];this.fail=false;}

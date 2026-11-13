@@ -1,3 +1,4 @@
+import {QUALITY_COLLECTION_RULES, initializeQuality, addGoodSpan, qualitySummary, planQualityExtension} from './quality-progress.mjs?v=4.6';
 export const PROTOCOL_VERSION = '2026-11-12.1';
 export const PRE_REST = 210;
 export const BASE_PHASES = [
@@ -7,17 +8,17 @@ export const BASE_PHASES = [
   ['formal', '正式观察 · 安静静坐', 60, 'rest', null, '继续安静静坐，即将开始第一次坐姿踏步。'],
   ['exercise1', '第 1 次坐姿踏步', 40, 'exercise', 1, '跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。'],
   ['settle1', '停止踏步 · 坐姿恢复', 30, 'settle', 1, '双脚平放，前臂支撑，保持安静。'],
-  ['window1', '恢复 1 · 有效波形', 80, 'quality', 1, '保持安静静坐，采集连续 80 秒有效 ECG、PPG。'],
+  ['window1', '恢复 1 · 累计有效波形', 80, 'quality', 1, '保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。'],
   ['bp1', '测量第 1 次恢复血压', 60, 'measure', 1, '操作者按下血压计；受试者保持静坐。'],
   ['recovery1', '安静恢复 · 等待第 2 轮', 90, 'post', 1, '继续静坐恢复；原始波形持续保存。'],
   ['exercise2', '第 2 次坐姿踏步', 40, 'exercise', 2, '跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。'],
   ['settle2', '停止踏步 · 坐姿恢复', 30, 'settle', 2, '双脚平放，前臂支撑，保持安静。'],
-  ['window2', '恢复 2 · 有效波形', 80, 'quality', 2, '保持安静静坐，采集连续 80 秒有效 ECG、PPG。'],
+  ['window2', '恢复 2 · 累计有效波形', 80, 'quality', 2, '保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。'],
   ['bp2', '测量第 2 次恢复血压', 60, 'measure', 2, '操作者按下血压计；受试者保持静坐。'],
   ['recovery2', '安静恢复 · 等待第 3 轮', 90, 'post', 2, '继续静坐恢复；原始波形持续保存。'],
   ['exercise3', '第 3 次坐姿踏步', 40, 'exercise', 3, '跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。'],
   ['settle3', '停止踏步 · 坐姿恢复', 30, 'settle', 3, '双脚平放，前臂支撑，保持安静。'],
-  ['window3', '恢复 3 · 有效波形', 80, 'quality', 3, '保持安静静坐，采集连续 80 秒有效 ECG、PPG。'],
+  ['window3', '恢复 3 · 累计有效波形', 80, 'quality', 3, '保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。'],
   ['bp3', '测量第 3 次恢复血压', 60, 'measure', 3, '操作者按下血压计；受试者保持静坐。'],
   ['post3', '最后恢复 · 准备结束', 30, 'post', 3, '末次完全放气至少 30 秒，确认本人已经恢复。'],
 ].map(([id, title, duration, kind, round, instruction]) => ({id, title, duration, kind, round, instruction}));
@@ -41,7 +42,10 @@ export function newState(now = Date.now()) {
 }
 
 export class ProtocolEngine {
-  constructor(state = newState()) { this.s = state; this.s.skips ??= []; }
+  constructor(state = newState()) {
+    this.s = state; this.s.skips ??= [];
+    for (const phase of this.s.phases.filter(p => p.kind === 'quality')) initializeQuality(this.s.quality[phase.round], phase, this.s.events);
+  }
   elapsed(now = Date.now()) { return this.s.startAt === null ? 0 : ((this.s.endAt ?? now) - this.s.startAt) / 1000; }
   current() { return this.s.phases[this.s.index]; }
   log(type, detail = {}, now = Date.now()) {
@@ -66,6 +70,7 @@ export class ProtocolEngine {
   phaseTarget() {
     const p = this.current();
     let target = p.actualStart + p.duration + (p.kind === 'exercise' ? 0 : p.extra);
+    if (p.kind === 'quality') target += this.s.quality[p.round].automaticExtraSeconds ?? 0;
     if (p.kind === 'measure') {
       const m = this.s.measurements[p.round];
       if (m.pressedAt !== null) target = Math.max(target, m.pressedAt + 60);
@@ -77,13 +82,20 @@ export class ProtocolEngine {
     return target;
   }
   validSeconds(now) {
-    const p = this.current(), q = this.s.quality[p.round];
-    if(p.kind==='quality'&&q.automatic&&(!q.latestQualityOk||this.elapsed(now)-(q.lastQualityCheck??-Infinity)>1))return 0;
-    return p.kind === 'quality' && q.since !== null && !q.unstable ? Math.max(0, this.elapsed(now) - q.since) : 0;
+    return this.current().kind === 'quality' ? this.qualityProgress(now).goodSeconds : 0;
+  }
+  qualityProgress(now) {
+    const p = this.current();
+    return qualitySummary(this.s.quality[p.round], p, this.elapsed(now), this.s.qualityAutomatic);
   }
   applySignalQuality(result, now) {
     if(!this.s.qualityAutomatic||this.s.mode!=='running'||this.current().kind!=='quality')return;
     const q=this.s.quality[this.current().round],t=this.elapsed(now);
+    const previous=q.lastQualityCheck,dt=Number.isFinite(previous)?Math.max(0,t-previous):0;
+    const creditEnd=q.automaticExtraSeconds!==null?Math.min(t,this.phaseTarget()):t;
+    if(dt>0&&dt<=QUALITY_COLLECTION_RULES.freshnessSeconds&&q.latestQualityOk&&!q.manualUnstable&&!this.s.hold)addGoodSpan(q,previous,creditEnd);
+    else if(!Number.isFinite(previous)&&result.ok&&!q.manualUnstable&&!this.s.hold&&t-this.current().actualStart<=QUALITY_COLLECTION_RULES.freshnessSeconds)addGoodSpan(q,this.current().actualStart,creditEnd);
+    if(!result.ok||dt>QUALITY_COLLECTION_RULES.freshnessSeconds||q.manualUnstable||this.s.hold)q.currentRunSeconds=0;
     q.automatic=true;q.latestQualityOk=!!result.ok;q.lastQualityCheck=t;q.automaticReason=result.reason;q.automaticStatus=result.status??(result.ok?'pass':'fail');
     if(q.manualUnstable)return;
     if(!result.ok){
@@ -95,9 +107,9 @@ export class ProtocolEngine {
     if (this.s.hold) reasons.push(this.s.hold.reason);
     if (p.kind === 'quality') {
       const q = this.s.quality[p.round];
-      if (q.unstable || q.since === null) reasons.push('等待信号恢复稳定，再重新计满 80 秒');
-      else if (this.validSeconds(now) < 80) reasons.push(`有效波形还需 ${Math.ceil(80 - this.validSeconds(now))} 秒`);
-      if (q.confirmedAt === null) reasons.push('等待操作者核验连续 80 秒有效波形');
+      const progress = this.qualityProgress(now);
+      if (!progress.enough && q.insufficientAcknowledgedAt === null) reasons.push('候选有效时长或完整 20 秒片段不足，请核验采集结果');
+      if (q.confirmedAt === null) reasons.push('等待操作者核验累计有效波形');
       if (p.round > 0) {
         const previous = this.s.measurements[p.round - 1];
         if (previous.deflatedAt === null) reasons.push('上次袖带完全放气尚未确认');
@@ -122,6 +134,10 @@ export class ProtocolEngine {
     }
     this.s.lastTick = now;
     const p = this.current(), t = this.elapsed(now);
+    if (p.kind === 'quality' && planQualityExtension(this.s.quality[p.round], p, t, this.s.qualityAutomatic)) {
+      const q=this.s.quality[p.round];
+      this.log('quality_compensation_planned',{round:p.round,seconds:q.automaticExtraSeconds,goodSeconds:this.validSeconds(now),maximumSeconds:QUALITY_COLLECTION_RULES.maxAutomaticExtraSeconds},now);
+    }
     if (t + 0.001 < this.phaseTarget() || this.blockers(now).length) return null;
     return this.advance(now);
   }
@@ -177,21 +193,21 @@ export class ProtocolEngine {
   extend(seconds, reason, now) {
     if (this.s.mode !== 'running' || this.current().kind === 'exercise' || !Number.isFinite(seconds) || seconds < 1 || seconds > 3600) return false;
     const p = this.current(), overdue = Math.max(0, this.elapsed(now) - this.phaseTarget());
+    if(p.kind==='quality'&&this.elapsed(now)>=this.phaseTarget()){this.s.quality[p.round].lastQualityCheck=this.elapsed(now);this.s.quality[p.round].currentRunSeconds=0;}
     p.extra += overdue + seconds;
     this.log('delay_added', {phase: p.id, seconds, reason}, now); return true;
   }
   hold(kind, reason, now) {
     if (this.s.mode !== 'running' || this.s.hold) return false;
     const p = this.current();
-    if (p.kind === 'exercise' && ['data', 'connection', 'signal', 'quality'].includes(kind)) {
-      // A signal fault must never turn the fixed exercise into a held phase.
-      // Keep the warning visible and auditable; the next resting phase still
-      // requires a live stream and its normal quality checks.
+    if (['exercise', 'quality'].includes(p.kind) && ['data', 'connection', 'signal', 'quality'].includes(kind)) {
+      // Exercise stays fixed; quality phases use their bounded compensation.
+      // Faults remain visible and auditable instead of causing an endless hold.
       p.signalWarnings ??= [];
       if (!p.signalWarnings.some(w => w.kind === kind && w.reason === reason)) {
         const warning = {kind, reason, elapsed: this.elapsed(now)};
         p.signalWarnings.push(warning);
-        this.log('exercise_signal_warning_no_extension', {phase: p.id, ...warning}, now);
+        this.log(p.kind==='exercise'?'exercise_signal_warning_no_extension':'quality_signal_warning_compensated', {phase: p.id, ...warning}, now);
       }
       return false;
     }
@@ -209,6 +225,7 @@ export class ProtocolEngine {
   markUnstable(now) {
     if (this.s.mode !== 'running' || this.current().kind !== 'quality') return false;
     const q = this.s.quality[this.current().round];
+    if(!this.s.qualityAutomatic&&q.since!==null)addGoodSpan(q,q.since,this.elapsed(now));
     q.unstable = true; q.since = null; q.confirmedAt = null; q.manualUnstable = true;
     this.log('signal_unstable', {round: this.current().round}, now); return true;
   }
@@ -216,13 +233,20 @@ export class ProtocolEngine {
     if (this.s.mode !== 'running' || this.current().kind !== 'quality') return false;
     const q = this.s.quality[this.current().round];
     q.unstable = false; q.since = this.elapsed(now); q.confirmedAt = null; q.manualUnstable = false;
-    this.log('signal_stable_restart_80s', {round: this.current().round}, now); return true;
+    if(this.s.qualityAutomatic){q.latestQualityOk=false;q.lastQualityCheck=this.elapsed(now);q.currentRunSeconds=0;}
+    this.log('signal_stable_resume_accumulation', {round: this.current().round,retainedSeconds:this.validSeconds(now)}, now); return true;
   }
-  confirmQuality(now) {
-    if (this.s.mode !== 'running' || this.current().kind !== 'quality' || this.validSeconds(now) + 0.001 < 80) return false;
+  confirmQuality(now, {allowInsufficient = false} = {}) {
+    if (this.s.mode !== 'running' || this.current().kind !== 'quality') return false;
     const q = this.s.quality[this.current().round];
+    const progress=this.qualityProgress(now);
+    if (allowInsufficient && (!progress.extensionPlanned || this.elapsed(now)+.001<this.phaseTarget())) return false;
+    if (!progress.enough && !allowInsufficient) return false;
     if (q.confirmedAt !== null) return false;
-    q.confirmedAt = this.elapsed(now); this.log('valid_80s_manually_verified', {round: this.current().round}, now); return true;
+    if(!progress.enough)q.insufficientAcknowledgedAt=this.elapsed(now);
+    q.outcome=progress.enough?'screened_enough':'insufficient';
+    q.summaryOnConfirm=progress;
+    q.confirmedAt = this.elapsed(now); this.log(progress.enough?'cumulative_quality_manually_verified':'quality_insufficient_acknowledged', {round:this.current().round,...progress}, now); return true;
   }
   pressBp(now, confirmedNow = now) {
     const p = this.current(), m = this.s.measurements[p.round];
@@ -261,7 +285,7 @@ export class ProtocolEngine {
         end = Math.max(end, this.phaseTarget(), this.elapsed(now));
         if (p.kind === 'quality') {
           const q = this.s.quality[p.round];
-          if (q.since !== null) end = Math.max(end, q.since + 80);
+          end = Math.max(end, start + p.duration + p.extra + (q.automaticExtraSeconds ?? 0));
           if (p.round > 0) {
             const last = this.s.measurements[p.round - 1].deflatedAt;
             if (last !== null) end = Math.max(end, last + this.s.minBpInterval);
@@ -285,12 +309,14 @@ export class ProtocolEngine {
       hasSkippedSteps: s.skips.length > 0, skippedSteps: s.skips,
       rawSessionId: s.rawSessionId ?? null, qualityAutomatic: s.qualityAutomatic,
       exerciseSignalPolicy: {qualityAction: 'mark_and_save', extendOnPoorQuality: false, extendOnDataLoss: false},
+      qualityCollectionPolicy: QUALITY_COLLECTION_RULES,
+      qualityWindowSummary: s.phases.filter(p=>p.kind==='quality'&&p.actualStart!==null).map(p=>({round:p.round,phase:p.id,...qualitySummary(s.quality[p.round],p,p.actualEnd??this.elapsed(now),s.qualityAutomatic)})),
       minimumBpIntervalSeconds: s.minBpInterval,
       prechecks: s.prechecks, measurements: s.measurements,
       validWaveformManualChecks: s.quality, phases: this.schedule(now),
       finalChecks: s.finalChecks, completedVerification: s.completedVerification,
       notes: s.notes, events: s.events,
-      scope: s.qualityAutomatic ? '网页连接 ECG/PPG 采集板，保存原始数据并进行工程质量初筛；测压前不合格信号会等待恢复后重新累计连续 80 秒，仍须人工核验；血压结果以血压计保存记录为准。' : '网页记录计时及人工操作；自动质量初筛未启用，血压结果以血压计保存记录为准。',
+      scope: s.qualityAutomatic ? '保存全部原始数据；静止阶段累计 80 秒通过工程初筛的时长并要求至少一个连续 20 秒片段；按缺口一次追加，自动追加最多 40 秒，不清零累计。仍不足时须人工选择补采或带不足标记继续。分散片段不拼接为连续 80 秒历史；离线还须按模型逐窗验证。血压结果以血压计保存记录为准。' : '网页记录计时及人工操作；自动质量初筛未启用，血压结果以血压计保存记录为准。',
     };
   }
 }

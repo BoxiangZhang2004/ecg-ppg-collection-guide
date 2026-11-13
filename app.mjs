@@ -1,6 +1,6 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.5';
-import {Acquisition} from './acquisition.mjs?v=4.5';
-import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.5';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.6';
+import {Acquisition} from './acquisition.mjs?v=4.6';
+import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.6';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const serialSupport=detectSerialSupport();
 $('browser-warning').hidden=serialSupport.supported;$('browser-warning-reason').textContent=serialSupport.message;
@@ -32,12 +32,14 @@ function task(now){
  if(s.mode==='ready'){const canStart=capture.connected&&!!capture.parser.protocol&&!recordingBusy;return {...result,key:'ready:'+canStart+':'+recordingBusy,phase:'开始记录',title:'现在开始原始数据采集',seconds:null,detail:canStart?'点击后同时开始本机保存与 00:00 计时。':'请先连接采集板，等待识别到有效原始帧。',html:button('begin',recordingBusy?'正在准备本机保存…':'开始采集并计时 →',!canStart)};}
  if(s.mode==='await-finish')return {...result,key:'finish',phase:'结束记录',title:'确认恢复，结束本次采集',seconds:null,detail:'确认本人已恢复。点击后停止原始保存并完成本机写入。',html:button('finish','已恢复，停止采集并保存')};
  if(p.kind==='quality'){
-  const q=s.quality[p.round],valid=engine.validSeconds(now);
+  const q=s.quality[p.round],progress=engine.qualityProgress(now),valid=progress.goodSeconds;
   let intervalReady=true;if(p.round>0){const last=s.measurements[p.round-1].deflatedAt;intervalReady=last!==null&&t-last>=s.minBpInterval;}
-  const ready=valid>=80&&t>=engine.phaseTarget()&&intervalReady;
-  if(q.unstable&&q.manualUnstable)return {...result,key:'unstable',title:'等待信号稳定',seconds:null,detail:'波形稳定后，重新计满连续 80 秒。',html:button('restart-quality','信号已稳定，重新计 80 秒')};
-  if(q.unstable)return {...result,key:'automatic-waiting:'+q.automaticStatus,title:q.automaticStatus==='waiting'?'正在评估信号':'信号不佳，自动延长采集',seconds:null,detail:(q.automaticReason||'质量尚未通过')+'。\n保持静坐，恢复后自动重新累计连续 80 秒。',hint:'有效波形：0 / 80 秒 · 原始保存继续，后续步骤顺延'};
-  return {...result,key:'quality:'+ready+':'+(q.confirmedAt!==null),detail:'保持安静。自动初筛通过后计数，确认前请核对波形。',html:button('quality',q.confirmedAt!==null?'已核验，等待进入测量':'连续 80 秒通过，确认测血压 →',!ready||q.confirmedAt!==null),hint:`有效波形：${Math.min(80,Math.floor(valid))} / 80 秒`};
+  const remaining=Math.max(0,Math.ceil(engine.phaseTarget()-t)),ready=progress.enough&&!remaining&&intervalReady;
+  const hint=`累计初筛通过 ${Math.floor(valid)} / 80 秒 · 完整连续 20 秒片段 ${progress.complete20sWindows} 个 · 自动补采 ${progress.automaticExtraSeconds} / 40 秒`;
+  if(progress.extensionPlanned&&!remaining&&!progress.enough)return {...result,key:'quality-insufficient:'+intervalReady+':'+q.manualUnstable,title:'本段结束，质量仍不足',seconds:null,detail:'已保留原始数据和累计时长，不再自动追加。\n可再采 20 秒，或将本节点标记为质量不足后继续测血压。',html:button('quality-more','再采 20 秒（保留累计）')+button('quality-insufficient','记录质量不足，继续测血压 →',!intervalReady,false)+(q.manualUnstable?button('restart-quality','信号已稳定，恢复累计',false,true):''),hint};
+  if(q.manualUnstable)return {...result,key:'unstable',title:'信号不稳，已暂停累计',seconds:remaining,detail:'已通过的时长保留。确认信号稳定后继续累计。',html:button('restart-quality','信号已稳定，恢复累计'),hint};
+  const extending=progress.extensionPlanned&&progress.automaticExtraSeconds>0&&remaining>0;
+  return {...result,key:'quality:'+ready+':'+(q.confirmedAt!==null)+':'+extending,title:extending?'继续静坐，补足有效时长':'安静静坐，累计有效波形',seconds:remaining,detail:(q.automaticReason||'正在检查两路信号')+'。\n单次不合格不会清零；目标累计 80 秒，并保留完整 20 秒片段。',html:button('quality',q.confirmedAt!==null?'已核验，等待进入测量':'累计条件满足，确认测血压 →',!ready||q.confirmedAt!==null),hint};
  }
  if(p.kind==='measure'){
   const m=s.measurements[p.round],phase=LABELS[p.round];
@@ -191,6 +193,8 @@ document.addEventListener('click',async e=>{
  case 'skip':if(s.mode==='ready'&&capture.connected&&capture.parser.protocol){await startRaw(true);break;}if(engine.skip(now)){tempReview=null;lastBeat=-1;if('speechSynthesis'in window)speechSynthesis.cancel();if(engine.s.mode==='completed'){release();await stopRaw();}changed();}break;
  case 'begin':full();await unlock();await startRaw();break;
  case 'quality':engine.confirmQuality(now);engine.tick(now);changed();break;
+ case 'quality-more':engine.extend(20,'操作者选择补采 20 秒',now);changed();break;
+ case 'quality-insufficient':engine.confirmQuality(now,{allowInsufficient:true});engine.tick(now);changed();break;
  case 'bp':engine.pressBp(now);changed();break;
  case 'temperature':{const raw=$('temperature')?.value,v=Number(raw);if(!raw||!Number.isFinite(v)||v<25||v>45||Math.abs(v*10-Math.round(v*10))>.00001){toast('请输入额温枪读数，最多 1 位小数。');return;}tempReview={round:p.round,value:v,measuredAt:engine.elapsed(now)};changed();break;}
  case 'verify-temp':if(tempReview){engine.confirmTemperature(tempReview.value,tempReview.measuredAt,now);tempReview=null;changed();}break;
