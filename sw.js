@@ -1,5 +1,5 @@
-const CACHE='ecg-ppg-guide-20261112-v4.2';
-const ASSETS=['./','./index.html','./style.css?v=4.2','./app.mjs?v=4.2','./engine.mjs?v=4.2','./acquisition.mjs?v=4.2','./serial-protocol.mjs?v=4.2','./signal-quality.mjs?v=4.2','./pulse-processing.mjs?v=4.2','./signal-filters.mjs?v=4.2','./raw-storage.mjs?v=4.2','./zip-store.mjs?v=4.2','./icon.svg','./manifest.webmanifest'];
+const CACHE='ecg-ppg-guide-20261112-v4.3';
+const ASSETS=['./','./index.html','./style.css?v=4.3','./app.mjs?v=4.3','./engine.mjs?v=4.3','./acquisition.mjs?v=4.3','./serial-protocol.mjs?v=4.3','./signal-quality.mjs?v=4.3','./pulse-processing.mjs?v=4.3','./signal-filters.mjs?v=4.3','./raw-storage.mjs?v=4.3','./zip-store.mjs?v=4.3','./icon.svg','./manifest.webmanifest'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(ASSETS))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('ecg-ppg-guide-')&&key!==CACHE).map(key=>caches.delete(key))))));
 self.addEventListener('fetch',event=>{

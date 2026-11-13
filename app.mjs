@@ -1,5 +1,5 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.2';
-import {Acquisition} from './acquisition.mjs?v=4.2';
+import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.3';
+import {Acquisition} from './acquisition.mjs?v=4.3';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let engine=new ProtocolEngine(),audio,lock,renderKey='',lastRender=0,lastSave=0,lastBeat=-1,lastTask='',tempReview=null,tempDraft={},dialogCallback,backgroundAt=null;
@@ -61,14 +61,14 @@ function render(now){
  $('elapsed-label').textContent=s.startAt===null?'尚未开录':`采集 ${ft(t)}`;
  $('setup').hidden=s.mode!=='setup';$('current').hidden=s.mode==='setup'||done||isExercise;$('exercise').hidden=!isExercise;$('summary').hidden=!done;
  document.body.classList.toggle('exercise-mode',isExercise);
- $('acquisition-panel').hidden=isExercise;
+ $('acquisition-panel').hidden=false;
  const rec=capture.recorder;
  $('capture-state').textContent=capture.source==='synthetic'?'演示：合成数据':capture.connected?'串口已连接':'未连接采集板';
  $('connect-button').textContent=capture.connecting?'连接中…':capture.port?'断开设备':'连接采集板';$('connect-button').disabled=capture.connecting||recordingBusy;
  $('raw-counter').textContent=rec.fault?'保存失败，原始记录已停止':recordingBusy&&!rec.recording?(s.mode==='ready'?'正在准备本机保存…':'正在完成本机保存…'):rec.recording?`正在保存 · 已写入 ${(rec.savedFrames||0).toLocaleString()} / 已接收 ${rec.frames.toLocaleString()} 帧`:rec.session?`${s.rawSessionId===rec.session.id?'已停止':'上次记录'} · ${(rec.savedFrames||0).toLocaleString()} 帧`:recoveredRaw?`本机保留 ${recoveredRaw.frames.toLocaleString()} 帧，连接后可恢复或导出`:'当前为预览，尚未开始保存';
  $('export-raw-button').disabled=recordingBusy||exportBusy||!(s.rawSessionId||recoveredRaw);$('export-raw-button').textContent=exportBusy?'正在打包…':'导出原始采集包';document.querySelectorAll('[data-action="export-raw"],[data-action="new-session"]').forEach(el=>{if(el.id!=='export-raw-button')el.disabled=recordingBusy||exportBusy;});
  const interference=rec.recording&&capture.context().interference;
- $('quality-overall').textContent=interference&&!rec.fault?'测压干扰期：原始数据保留，不计入有效段':signalState.reason+(capture.source==='synthetic'?'（合成数据）':'');$('quality-overall').className=interference?'quality-waiting':'quality-'+signalState.status;
+ $('quality-overall').textContent=interference&&!rec.fault?'测压干扰期：原始数据保留，不计入有效段':(isExercise?'运动中 · ':'')+signalState.reason+(capture.source==='synthetic'?'（合成数据）':'');$('quality-overall').className=interference?'quality-waiting':'quality-'+signalState.status;
  for(const kind of ['ecg','ppg']){$(kind+'-quality').textContent=signalState[kind]?.reason||'判断中';$(kind+'-quality').className=signalState[kind]?.ok?'quality-pass':signalState.status==='waiting'?'quality-waiting':'quality-fail';}
  for(const kind of ['ecg','ppg']){$(kind+'-plot-label').textContent=kind.toUpperCase()+(showRaw?' 原始 ADC':' 滤波（N=2）');$(kind+'-waveform').setAttribute('aria-label',kind.toUpperCase()+(showRaw?' 原始波形':' 滤波波形'));}
  $('waveform-toggle').textContent=showRaw?'显示滤波':'显示原始';$('waveform-toggle').setAttribute('aria-pressed',String(showRaw));

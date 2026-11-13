@@ -87,6 +87,28 @@ test('filtered preview removes DC but retains exact raw ADC and cannot approve f
  const segment=last.segment;a.ingest(Uint8Array.from(Array.from({length:5},()=>[...encodeBinary(700,800)]).flat()),13000);
  const restarted=a.plot.array().at(-1);assert.ok(restarted.segment>segment);assert.equal(restarted.warm,false);assert.ok(Math.abs(restarted.pf)<1e-5);assert.ok(Math.abs(restarted.ef)<1e-5);
 });
+test('all 40 seconds of rejected exercise signals are saved and plotted without extending exercise',async()=>{
+ let flow,quality={status:'waiting'};
+ const a=new Acquisition({context:()=>({phase:flow.current().id,interference:false,qualityState:quality.status})});
+ a.journal=new MemoryJournal();a.recorder=new RawRecorder(a.journal);a.source='serial';a.connected=true;a.parser.protocol='binary';
+ const session=await a.start({subjectCode:'EXERCISE_TEST'}),base=session.startedAt;
+ flow=new ProtocolEngine(newState(base-PRE_REST*1000));flow.startPreRest(base-PRE_REST*1000);flow.tick(base);flow.begin(base);flow.s.qualityAutomatic=true;
+ while(flow.current().id!=='exercise1')flow.skip(base);
+ const chunk=Uint8Array.from(Array.from({length:10},()=>[...encodeBinary(0,0)]).flat());
+ for(let k=1;k<=2000;k++){
+  const now=base+k*20;a.ingest(chunk,now);
+  if(k%50===0){quality=a.snapshot(now);assert.equal(quality.ok,false);flow.applySignalQuality(quality,now);assert.equal(flow.extend(10,'bad signal',now),false);flow.tick(now);a.tick(now,quality);}
+ }
+ const exercise=flow.s.phases.find(p=>p.id==='exercise1');
+ assert.equal(exercise.actualEnd-exercise.actualStart,40);assert.equal(exercise.extra,0);assert.equal(flow.current().id,'settle1');assert.equal(flow.s.hold,null);
+ assert.equal(a.recorder.frames,20000);assert.equal(a.plot.size,5000);assert.equal(a.plot.array().at(-1).at,base+40000);
+ await a.recorder.stop();assert.equal(a.recorder.savedFrames,20000);
+ const parts=await a.recorder.packageParts(),rows=(await new Blob(parts.csv).text()).trim().split('\r\n');
+ assert.equal(rows.length,20000);assert.ok(rows.every(row=>row.split(',')[8]==='exercise1'));assert.ok(rows.some(row=>row.endsWith(',fail')));
+ assert.ok(rows.every(row=>row.split(',')[5]==='0'&&row.split(',')[6]==='0'));
+ const raw=new Uint8Array(await new Blob(parts.raw).arrayBuffer());assert.equal(raw.length,120000);
+ for(let k=0;k<20000;k++)assert.deepEqual(raw.subarray(k*6,k*6+6),encodeBinary(0,0));
+});
 test('raw recorder preserves bytes and ADC through chunk flush and final partial block',async()=>{
  const j=new MemoryJournal(),r=new RawRecorder(j);await r.start({startedAt:1000,source:'serial'});const expected=[];
  for(let n=0;n<1100;n++){const [p,e]=syntheticSample(n),b=encodeBinary(p,e);expected.push(...b);r.addBytes(b);b.fill(0);r.addSample(p,e,1000+n*2,{phase:n<500?'baseline':'exercise1',interference:n>900,qualityState:'fail'},1);if(n===500)await r.flush();}

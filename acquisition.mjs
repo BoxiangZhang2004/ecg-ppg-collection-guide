@@ -1,7 +1,7 @@
-import {AutoFrameParser,SERIAL_CONFIG,encodeBinary} from './serial-protocol.mjs?v=4.2';
-import {QualityMonitor,Ring,QUALITY_RULES} from './signal-quality.mjs?v=4.2';
-import {RawJournal,RawRecorder,CSV_HEADER} from './raw-storage.mjs?v=4.2';
-import {zipStore} from './zip-store.mjs?v=4.2';
+import {AutoFrameParser,SERIAL_CONFIG,encodeBinary} from './serial-protocol.mjs?v=4.3';
+import {QualityMonitor,Ring,QUALITY_RULES} from './signal-quality.mjs?v=4.3';
+import {RawJournal,RawRecorder,CSV_HEADER} from './raw-storage.mjs?v=4.3';
+import {zipStore} from './zip-store.mjs?v=4.3';
 export function syntheticSample(n){const t=n/500,phase=(t*75/60)%1,g=(m,s)=>Math.exp(-.5*((phase-m)/s)**2);return [Math.round(450+70*g(.43,.085)+2*Math.sin(2*Math.PI*3*t)),Math.round(512+150*g(.15,.018)-70*g(.19,.022)+40*Math.sin(2*Math.PI*50*t))];}
 export class Acquisition {
   constructor({context=()=>({phase:'preview',interference:false,qualityState:'waiting'}),onFault=()=>{},onNotice=()=>{}}={}){

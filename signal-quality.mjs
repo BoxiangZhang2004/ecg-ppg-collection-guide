@@ -1,5 +1,5 @@
-import {SOSFilter,estimate} from './pulse-processing.mjs?v=4.2';
-import config from './signal-filters.mjs?v=4.2';
+import {SOSFilter,estimate} from './pulse-processing.mjs?v=4.3';
+import config from './signal-filters.mjs?v=4.3';
 export const QUALITY_RULES={version:'raw-screen-20261112-v1',nominalHz:500,rateMin:475,rateMax:525,staleMs:500,railFraction:.01,minSpanADC:8,analysisSamples:5000,warmupSamples:1500};
 export class Ring {
   constructor(capacity){this.capacity=capacity;this.data=new Array(capacity);this.size=0;this.cursor=0;}
