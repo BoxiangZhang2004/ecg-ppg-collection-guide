@@ -1,0 +1,157 @@
+{
+  "version": "2026-11-12.1",
+  "phases": [
+    {
+      "id": "baseline",
+      "title": "静息基线",
+      "duration": 90,
+      "kind": "quality",
+      "round": 0,
+      "instruction": "安静坐好，双脚平放，前臂放在支撑面上。"
+    },
+    {
+      "id": "bp0",
+      "title": "测量静息血压",
+      "duration": 60,
+      "kind": "measure",
+      "round": 0,
+      "instruction": "操作者按下血压计；受试者保持静坐，不说话、不抬手。"
+    },
+    {
+      "id": "post0",
+      "title": "测后安静静坐",
+      "duration": 30,
+      "kind": "post",
+      "round": 0,
+      "instruction": "保持静坐，保留完全放气后至少 30 秒的波形。"
+    },
+    {
+      "id": "formal",
+      "title": "正式观察 · 安静静坐",
+      "duration": 60,
+      "kind": "rest",
+      "round": null,
+      "instruction": "继续安静静坐，即将开始第一次坐姿踏步。"
+    },
+    {
+      "id": "exercise1",
+      "title": "第 1 次坐姿踏步",
+      "duration": 40,
+      "kind": "exercise",
+      "round": 1,
+      "instruction": "跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。"
+    },
+    {
+      "id": "settle1",
+      "title": "停止踏步 · 坐姿恢复",
+      "duration": 30,
+      "kind": "settle",
+      "round": 1,
+      "instruction": "双脚平放，前臂支撑，保持安静。"
+    },
+    {
+      "id": "window1",
+      "title": "恢复 1 · 累计有效波形",
+      "duration": 80,
+      "kind": "quality",
+      "round": 1,
+      "instruction": "保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。"
+    },
+    {
+      "id": "bp1",
+      "title": "测量第 1 次恢复血压",
+      "duration": 60,
+      "kind": "measure",
+      "round": 1,
+      "instruction": "操作者按下血压计；受试者保持静坐。"
+    },
+    {
+      "id": "recovery1",
+      "title": "安静恢复 · 等待第 2 轮",
+      "duration": 90,
+      "kind": "post",
+      "round": 1,
+      "instruction": "继续静坐恢复；原始波形持续保存。"
+    },
+    {
+      "id": "exercise2",
+      "title": "第 2 次坐姿踏步",
+      "duration": 40,
+      "kind": "exercise",
+      "round": 2,
+      "instruction": "跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。"
+    },
+    {
+      "id": "settle2",
+      "title": "停止踏步 · 坐姿恢复",
+      "duration": 30,
+      "kind": "settle",
+      "round": 2,
+      "instruction": "双脚平放，前臂支撑，保持安静。"
+    },
+    {
+      "id": "window2",
+      "title": "恢复 2 · 累计有效波形",
+      "duration": 80,
+      "kind": "quality",
+      "round": 2,
+      "instruction": "保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。"
+    },
+    {
+      "id": "bp2",
+      "title": "测量第 2 次恢复血压",
+      "duration": 60,
+      "kind": "measure",
+      "round": 2,
+      "instruction": "操作者按下血压计；受试者保持静坐。"
+    },
+    {
+      "id": "recovery2",
+      "title": "安静恢复 · 等待第 3 轮",
+      "duration": 90,
+      "kind": "post",
+      "round": 2,
+      "instruction": "继续静坐恢复；原始波形持续保存。"
+    },
+    {
+      "id": "exercise3",
+      "title": "第 3 次坐姿踏步",
+      "duration": 40,
+      "kind": "exercise",
+      "round": 3,
+      "instruction": "跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。"
+    },
+    {
+      "id": "settle3",
+      "title": "停止踏步 · 坐姿恢复",
+      "duration": 30,
+      "kind": "settle",
+      "round": 3,
+      "instruction": "双脚平放，前臂支撑，保持安静。"
+    },
+    {
+      "id": "window3",
+      "title": "恢复 3 · 累计有效波形",
+      "duration": 80,
+      "kind": "quality",
+      "round": 3,
+      "instruction": "保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。"
+    },
+    {
+      "id": "bp3",
+      "title": "测量第 3 次恢复血压",
+      "duration": 60,
+      "kind": "measure",
+      "round": 3,
+      "instruction": "操作者按下血压计；受试者保持静坐。"
+    },
+    {
+      "id": "post3",
+      "title": "最后恢复 · 准备结束",
+      "duration": 30,
+      "kind": "post",
+      "round": 3,
+      "instruction": "末次完全放气至少 30 秒，确认本人已经恢复。"
+    }
+  ]
+}

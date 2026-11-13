@@ -1,23 +1,23 @@
-import {QUALITY_COLLECTION_RULES, initializeQuality, addGoodSpan, qualitySummary, planQualityExtension} from './quality-progress.mjs?v=4.6';
-export const PROTOCOL_VERSION = '2026-11-12.1';
+import {QUALITY_COLLECTION_RULES, initializeQuality, addGoodSpan, qualitySummary, planQualityExtension} from './quality-progress.mjs?v=4.7';
+export const PROTOCOL_VERSION = '2026-11-13.2-short15';
+export const LEGACY_PROTOCOL_VERSION = '2026-11-12.1';
 export const PRE_REST = 210;
 export const BASE_PHASES = [
   ['baseline', '静息基线', 90, 'quality', 0, '安静坐好，双脚平放，前臂放在支撑面上。'],
   ['bp0', '测量静息血压', 60, 'measure', 0, '操作者按下血压计；受试者保持静坐，不说话、不抬手。'],
   ['post0', '测后安静静坐', 30, 'post', 0, '保持静坐，保留完全放气后至少 30 秒的波形。'],
-  ['formal', '正式观察 · 安静静坐', 60, 'rest', null, '继续安静静坐，即将开始第一次坐姿踏步。'],
   ['exercise1', '第 1 次坐姿踏步', 40, 'exercise', 1, '跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。'],
-  ['settle1', '停止踏步 · 坐姿恢复', 30, 'settle', 1, '双脚平放，前臂支撑，保持安静。'],
+  ['settle1', '停止踏步 · 整理姿势', 15, 'settle', 1, '用 15 秒坐好，双脚平放，前臂支撑，保持安静。'],
   ['window1', '恢复 1 · 累计有效波形', 80, 'quality', 1, '保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。'],
   ['bp1', '测量第 1 次恢复血压', 60, 'measure', 1, '操作者按下血压计；受试者保持静坐。'],
-  ['recovery1', '安静恢复 · 等待第 2 轮', 90, 'post', 1, '继续静坐恢复；原始波形持续保存。'],
+  ['recovery1', '放气后等待 · 准备第 2 轮', 30, 'post', 1, '完全放气后安静等待 30 秒；原始波形持续保存。'],
   ['exercise2', '第 2 次坐姿踏步', 40, 'exercise', 2, '跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。'],
-  ['settle2', '停止踏步 · 坐姿恢复', 30, 'settle', 2, '双脚平放，前臂支撑，保持安静。'],
+  ['settle2', '停止踏步 · 整理姿势', 15, 'settle', 2, '用 15 秒坐好，双脚平放，前臂支撑，保持安静。'],
   ['window2', '恢复 2 · 累计有效波形', 80, 'quality', 2, '保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。'],
   ['bp2', '测量第 2 次恢复血压', 60, 'measure', 2, '操作者按下血压计；受试者保持静坐。'],
-  ['recovery2', '安静恢复 · 等待第 3 轮', 90, 'post', 2, '继续静坐恢复；原始波形持续保存。'],
+  ['recovery2', '放气后等待 · 准备第 3 轮', 30, 'post', 2, '完全放气后安静等待 30 秒；原始波形持续保存。'],
   ['exercise3', '第 3 次坐姿踏步', 40, 'exercise', 3, '跟随左右提示交替抬脚。上身稳定，不摆臂、不握拳、不憋气。'],
-  ['settle3', '停止踏步 · 坐姿恢复', 30, 'settle', 3, '双脚平放，前臂支撑，保持安静。'],
+  ['settle3', '停止踏步 · 整理姿势', 15, 'settle', 3, '用 15 秒坐好，双脚平放，前臂支撑，保持安静。'],
   ['window3', '恢复 3 · 累计有效波形', 80, 'quality', 3, '保持静坐，累计 80 秒通过初筛的波形，并保留完整 20 秒片段。'],
   ['bp3', '测量第 3 次恢复血压', 60, 'measure', 3, '操作者按下血压计；受试者保持静坐。'],
   ['post3', '最后恢复 · 准备结束', 30, 'post', 3, '末次完全放气至少 30 秒，确认本人已经恢复。'],
@@ -36,9 +36,25 @@ export function newState(now = Date.now()) {
     phases: BASE_PHASES.map(p => ({...p, extra: 0, actualStart: null, actualEnd: null})),
     quality: LABELS.map(() => ({since: null, confirmedAt: null, unstable: false})),
     measurements: LABELS.map(label => ({label, pressedAt: null, pressConfirmedAt: null, deflatedAt: null, temperature: null, temperatureAt: null, verifiedAt: null, bpSkippedAt: null, temperatureSkippedAt: null, deflationSkippedAt: null, temperaturePromptAt: null})),
-    hold: null, events: [], prechecks: [], finalChecks: [], minBpInterval: 240,
+    hold: null, events: [], prechecks: [], finalChecks: [], minBpInterval: 0,
     notes: '', recovered: false, completedVerification: false,
   };
+}
+
+// Do not rewrite an active recording's timeline when a cached page updates.
+// Only sessions that have never started recording may adopt the new protocol.
+export function restoreProtocolState(state) {
+  if (!state || !Array.isArray(state.phases) || state.quality?.length !== 4 || state.measurements?.length !== 4 || !Array.isArray(state.events)) return null;
+  const current = state.version === PROTOCOL_VERSION && state.phases.length === BASE_PHASES.length && state.phases.every((p,i) => p.id === BASE_PHASES[i].id);
+  const legacy = state.version === LEGACY_PROTOCOL_VERSION && state.phases.length === 19 && state.phases[3]?.id === 'formal';
+  if (!current && !legacy) return null;
+  if (legacy && state.startAt === null && !state.rawSessionId && ['setup','prerest','ready'].includes(state.mode)) {
+    const fresh = newState(state.createdAt);
+    return {...fresh, ...state, version: PROTOCOL_VERSION, phases: fresh.phases, quality: fresh.quality,
+      measurements: fresh.measurements, minBpInterval: 0,
+      events: [...state.events, {type:'unstarted_protocol_updated', at:Date.now(), elapsed:null, fromVersion:state.version, toVersion:PROTOCOL_VERSION}]};
+  }
+  return state;
 }
 
 export class ProtocolEngine {
@@ -46,6 +62,7 @@ export class ProtocolEngine {
     this.s = state; this.s.skips ??= [];
     for (const phase of this.s.phases.filter(p => p.kind === 'quality')) initializeQuality(this.s.quality[phase.round], phase, this.s.events);
   }
+  get compactProtocol() { return this.s.version === PROTOCOL_VERSION; }
   elapsed(now = Date.now()) { return this.s.startAt === null ? 0 : ((this.s.endAt ?? now) - this.s.startAt) / 1000; }
   current() { return this.s.phases[this.s.index]; }
   log(type, detail = {}, now = Date.now()) {
@@ -73,7 +90,8 @@ export class ProtocolEngine {
     if (p.kind === 'quality') target += this.s.quality[p.round].automaticExtraSeconds ?? 0;
     if (p.kind === 'measure') {
       const m = this.s.measurements[p.round];
-      if (m.pressedAt !== null) target = Math.max(target, m.pressedAt + 60);
+      if (this.compactProtocol && (m.deflatedAt !== null || m.deflationSkippedAt != null)) target = m.deflatedAt ?? m.deflationSkippedAt;
+      else if (m.pressedAt !== null) target = Math.max(target, m.pressedAt + 60);
     }
     if (p.kind === 'post') {
       const m = this.s.measurements[p.round];
@@ -120,7 +138,11 @@ export class ProtocolEngine {
       const m = this.s.measurements[p.round];
       if (m.pressedAt === null && m.bpSkippedAt == null) reasons.push('等待确认已按下血压计测量键');
       if (m.deflatedAt === null && m.deflationSkippedAt == null && m.bpSkippedAt == null) reasons.push('等待确认血压测量完成、袖带完全放气');
-      if (m.verifiedAt === null && m.temperatureSkippedAt == null) reasons.push('等待额温测量及读数复核');
+      if (!this.compactProtocol && m.verifiedAt === null && m.temperatureSkippedAt == null) reasons.push('等待额温测量及读数复核');
+    }
+    if (this.compactProtocol && p.kind === 'post') {
+      const m = this.s.measurements[p.round];
+      if (m.verifiedAt === null && m.temperatureSkippedAt == null) reasons.push('请在等待期间完成额温测量及读数复核');
     }
     return reasons;
   }
@@ -175,6 +197,10 @@ export class ProtocolEngine {
       } else if (m.pressedAt !== null && m.deflatedAt === null && m.deflationSkippedAt == null) {
         step = 'deflation'; m.deflationSkippedAt = t;
       } else step = 'phase';
+    } else if (this.compactProtocol && p.kind === 'post' && s.measurements[p.round].verifiedAt === null && s.measurements[p.round].temperatureSkippedAt == null) {
+      const m = s.measurements[p.round], due = this.temperatureDueAt();
+      if (due !== null && t < due) { step = 'temperature_wait'; m.temperaturePromptAt = t; }
+      else { step = 'temperature'; m.temperatureSkippedAt = t; }
     } else step = 'phase';
     const skipped = {step, phase: s.mode === 'running' ? p.id : s.mode, at: now, elapsed: s.startAt === null ? null : t};
     if (step === 'pre_rest') skipped.remainingSeconds = Math.max(0, PRE_REST - (now - s.preStart) / 1000);
@@ -261,8 +287,9 @@ export class ProtocolEngine {
   }
   confirmTemperature(value, measuredAt, now) {
     const p = this.current(), m = this.s.measurements[p.round];
-    const due = p.kind === 'measure' ? this.temperatureDueAt() : null;
-    if (this.s.mode !== 'running' || p.kind !== 'measure' || due === null || measuredAt < due || m.verifiedAt !== null || m.temperatureSkippedAt != null || !Number.isFinite(value) || value < 25 || value > 45) return false;
+    const allowed = p.kind === 'measure' || (this.compactProtocol && p.kind === 'post');
+    const due = allowed ? this.temperatureDueAt() : null;
+    if (this.s.mode !== 'running' || !allowed || due === null || measuredAt < due || m.verifiedAt !== null || m.temperatureSkippedAt != null || !Number.isFinite(value) || value < 25 || value > 45) return false;
     m.temperature = value; m.temperatureAt = measuredAt; m.verifiedAt = this.elapsed(now);
     this.log('temperature_measured_and_verified', {round: p.round, value, measuredAt}, now); return true;
   }
@@ -282,7 +309,7 @@ export class ProtocolEngine {
       const start = p.actualStart ?? cursor;
       let end = p.actualEnd ?? (start + p.duration + (p.kind === 'exercise' ? 0 : p.extra));
       if (active && i === this.s.index && p.actualEnd === null) {
-        end = Math.max(end, this.phaseTarget(), this.elapsed(now));
+        end = Math.max(this.phaseTarget(), this.elapsed(now));
         if (p.kind === 'quality') {
           const q = this.s.quality[p.round];
           end = Math.max(end, start + p.duration + p.extra + (q.automaticExtraSeconds ?? 0));
@@ -312,6 +339,7 @@ export class ProtocolEngine {
       qualityCollectionPolicy: QUALITY_COLLECTION_RULES,
       qualityWindowSummary: s.phases.filter(p=>p.kind==='quality'&&p.actualStart!==null).map(p=>({round:p.round,phase:p.id,...qualitySummary(s.quality[p.round],p,p.actualEnd??this.elapsed(now),s.qualityAutomatic)})),
       minimumBpIntervalSeconds: s.minBpInterval,
+      timingPolicy: this.compactProtocol ? {fixedNonBpSeconds:615, nominalRecordingSeconds:855, reservedBpSeconds:60, bpEndsOnConfirmedDeflation:true, postureSeconds:15, postDeflationSeconds:30} : {nominalRecordingSeconds:1080, reservedBpSeconds:60, bpEndsOnConfirmedDeflation:false, postureSeconds:30, postDeflationSeconds:30},
       prechecks: s.prechecks, measurements: s.measurements,
       validWaveformManualChecks: s.quality, phases: this.schedule(now),
       finalChecks: s.finalChecks, completedVerification: s.completedVerification,

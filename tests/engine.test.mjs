@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ProtocolEngine,newState,BASE_PHASES,PRE_REST} from '../engine.mjs';
+import {ProtocolEngine,newState,BASE_PHASES,PRE_REST,PROTOCOL_VERSION,restoreProtocolState} from '../engine.mjs';
+import {readFileSync} from 'node:fs';
 
 const origin=1_800_000_000_000;
 const at=t=>origin+t*1000;
@@ -27,32 +28,37 @@ function run(e,from,to,options={}){
   }
 }
 
-test('PDF schedule totals 18 minutes and includes all 19 phases',()=>{
-  assert.equal(BASE_PHASES.reduce((n,p)=>n+p.duration,0),1080);
+test('shortened schedule totals 14:15 with four 60s BP reservations and 18 phases',()=>{
+  assert.equal(BASE_PHASES.length,18);
+  assert.equal(BASE_PHASES.reduce((n,p)=>n+p.duration,0),855);
+  assert.equal(BASE_PHASES.filter(p=>p.kind!=='measure').reduce((n,p)=>n+p.duration,0),615);
+  assert.deepEqual(BASE_PHASES.filter(p=>p.kind==='settle').map(p=>p.duration),[15,15,15]);
+  assert.deepEqual(BASE_PHASES.filter(p=>p.kind==='post').map(p=>p.duration),[30,30,30,30]);
   assert.deepEqual(BASE_PHASES.filter(p=>p.kind==='exercise').map(p=>p.duration),[40,40,40]);
   const e=new ProtocolEngine();
-  assert.deepEqual(e.schedule(origin).filter(p=>p.kind==='measure').map(p=>p.start),[90,390,690,990]);
-  assert.deepEqual(e.schedule(origin).filter(p=>p.kind==='exercise').map(p=>p.start),[240,540,840]);
+  assert.deepEqual(e.schedule(origin).filter(p=>p.kind==='measure').map(p=>p.start),[90,315,540,765]);
+  assert.deepEqual(e.schedule(origin).filter(p=>p.kind==='exercise').map(p=>p.start),[180,405,630]);
+  assert.equal(e.s.minBpInterval,0);
 });
 test('pre-rest is separate and recording requires explicit start',()=>{
   const e=new ProtocolEngine(newState(0));assert.equal(e.begin(0),false);
   e.startPreRest(0);e.tick(210_000);assert.equal(e.s.mode,'ready');assert.equal(e.s.startAt,null);
   assert.equal(e.begin(211_000),true);assert.equal(e.elapsed(212_000),1);
 });
-test('complete nominal protocol: 4 BP, 4 temperatures and 80s checks, 3 exercise phases, 18:00',()=>{
-  const e=started();run(e,0,1080);
+test('complete nominal protocol: four measurements, three exercises, 14:15',()=>{
+  const e=started();run(e,0,855);
   assert.equal(e.s.mode,'await-finish');
-  assert.deepEqual(e.s.measurements.map(m=>m.pressedAt),[90,390,690,990]);
-  assert.deepEqual(e.s.measurements.map(m=>m.temperatureAt),[100,400,700,1000]);
+  assert.deepEqual(e.s.measurements.map(m=>m.pressedAt),[90,315,540,765]);
+  assert.deepEqual(e.s.measurements.map(m=>m.temperatureAt),[100,325,550,775]);
   assert.deepEqual(e.s.phases.filter(p=>p.kind==='exercise').map(p=>p.actualEnd-p.actualStart),[40,40,40]);
-  assert.equal(e.finish(at(1080)),false);e.s.recovered=true;assert.equal(e.finish(at(1080)),true);
-  assert.equal(e.elapsed(at(2000)),1080);assert.equal(e.s.mode,'completed');
+  assert.equal(e.finish(at(855)),false);e.s.recovered=true;assert.equal(e.finish(at(855)),true);
+  assert.equal(e.elapsed(at(2000)),855);assert.equal(e.s.mode,'completed');
 });
 test('manual extension moves every downstream node, recording clock stays continuous',()=>{
   const e=started();run(e,0,10);assert.equal(e.extend(30,'信号不稳定',at(10)),true);
   assert.equal(e.schedule(at(10)).find(p=>p.id==='bp0').start,120);
-  run(e,11,1110);assert.equal(e.s.mode,'await-finish');assert.equal(e.elapsed(at(1110)),1110);
-  assert.deepEqual(e.s.measurements.map(m=>m.pressedAt),[120,420,720,1020]);
+  run(e,11,885);assert.equal(e.s.mode,'await-finish');assert.equal(e.elapsed(at(885)),885);
+  assert.deepEqual(e.s.measurements.map(m=>m.pressedAt),[120,345,570,795]);
 });
 test('manual instability pauses accumulation without deleting earlier good seconds',()=>{
   const e=started();run(e,0,80);assert.notEqual(e.s.quality[0].confirmedAt,null);
@@ -77,21 +83,21 @@ test('temperature uses actual BP press plus 10s, duplicate actions rejected',()=
   assert.equal(e.s.measurements[0].temperatureAt,105);assert.equal(e.s.measurements[0].verifiedAt,107);
   assert.equal(e.confirmTemperature(37,108,at(108)),false);assert.equal(e.phaseTarget(),155);
 });
-test('missing deflation or temperature prevents automatic advance after 60s',()=>{
+test('BP over 60s waits for full deflation; pending temperature carries into post wait',()=>{
   const e=started();run(e,0,90);
   for(let t=91;t<=160;t++)e.tick(at(t));
   assert.equal(e.current().id,'bp0');assert.equal(e.s.measurements[0].deflatedAt,null);
-  e.deflate(at(160));e.tick(at(160));assert.equal(e.current().id,'bp0');
-  e.confirmTemperature(36.5,160,at(160));e.tick(at(160));assert.equal(e.current().id,'post0');
+  e.deflate(at(160));e.tick(at(160));assert.equal(e.current().id,'post0');
+  assert.equal(e.confirmTemperature(36.5,160,at(160)),true);e.tick(at(160));assert.equal(e.current().id,'post0');
   assert.equal(e.current().actualStart,160);assert.equal(e.phaseTarget(),190);
 });
 test('overlong BP shifts rest and all future measurements, fully deflated +30s preserved',()=>{
-  const e=started();run(e,0,1260,{deflateAfter:90});
+  const e=started();run(e,0,975,{deflateAfter:90});
   assert.equal(e.s.mode,'await-finish');
   const m=e.s.measurements;
-  for(let i=1;i<4;i++)assert.ok(m[i].pressedAt-m[i-1].deflatedAt>=240);
+  for(let i=1;i<4;i++)assert.equal(m[i].pressedAt-m[i-1].deflatedAt,165);
   assert.ok(e.s.phases.at(-1).actualEnd-m[3].deflatedAt>=30);
-  assert.ok(e.elapsed(at(1260))>1080);
+  assert.equal(e.s.phases.at(-1).actualEnd,975);
 });
 test('stricter device interval holds valid window and shifts downstream nodes',()=>{
   const e=started();e.s.minBpInterval=300;run(e,0,1300);
@@ -99,8 +105,8 @@ test('stricter device interval holds valid window and shifts downstream nodes',(
   for(let i=1;i<4;i++)assert.ok(e.s.measurements[i].pressedAt-e.s.measurements[i-1].deflatedAt>=300);
 });
 test('exercise cannot be extended',()=>{
-  const e=started();run(e,0,240);assert.equal(e.current().kind,'exercise');
-  assert.equal(e.extend(60,'更多时间',at(240)),false);assert.equal(e.current().duration,40);
+  const e=started();run(e,0,180);assert.equal(e.current().kind,'exercise');
+  assert.equal(e.extend(60,'更多时间',at(180)),false);assert.equal(e.current().duration,40);
 });
 test('all three exercise phases end after 40 seconds despite bad quality and signal loss',()=>{
   for(let round=1;round<=3;round++){
@@ -137,7 +143,7 @@ test('signal faults in a quality phase are recorded without an indefinite hold',
   assert.ok(e.s.events.some(v=>v.type==='quality_signal_warning_compensated'));
 });
 test('background suspension holds at current stage without silently skipping exercise',()=>{
-  const e=started();run(e,0,240);e.tick(at(500));
+  const e=started();run(e,0,180);e.tick(at(500));
   assert.equal(e.current().id,'exercise1');assert.equal(e.s.hold.kind,'attention');
   assert.equal(e.s.phases.find(p=>p.id==='exercise2').actualStart,null);
   e.resume(at(501));e.tick(at(501));assert.equal(e.current().id,'settle1');assert.equal(e.current().actualStart,501);
@@ -197,9 +203,9 @@ test('skip temperature and deflation without marking either as measured',()=>{
   assert.equal(e.skip(at(6)),'phase');assert.equal(e.current().id,'post0');
 });
 test('exercise skip stops the exercise phase and starts seated recovery',()=>{
-  const e=started();run(e,0,240);assert.equal(e.skip(at(245)),'phase');
-  assert.equal(e.current().id,'settle1');assert.equal(e.current().actualStart,245);
-  assert.equal(e.s.phases.find(p=>p.id==='exercise1').actualEnd,245);
+  const e=started();run(e,0,180);assert.equal(e.skip(at(185)),'phase');
+  assert.equal(e.current().id,'settle1');assert.equal(e.current().actualStart,185);
+  assert.equal(e.s.phases.find(p=>p.id==='exercise1').actualEnd,185);
 });
 test('all steps can be demonstrated quickly, and skipped measurements remain unconfirmed',()=>{
   const e=new ProtocolEngine(newState(origin));e.startPreRest(origin);
@@ -210,4 +216,53 @@ test('all steps can be demonstrated quickly, and skipped measurements remain unc
   const restored=new ProtocolEngine(JSON.parse(JSON.stringify(e.s))),report=restored.report();
   assert.equal(report.hasSkippedSteps,true);assert.equal(report.skippedSteps.length,count);
   assert.equal(restored.skip(at(100)),false);
+});
+
+for(const [bpSeconds,total] of [[60,855],[50,815],[45,795],[40,775]])test(`four ${bpSeconds}s BP readings end at ${total}s without a 60s minimum or four-minute gate`,()=>{
+  const e=started();run(e,0,total,{deflateAfter:bpSeconds});
+  assert.equal(e.s.mode,'await-finish');assert.equal(e.s.phases.at(-1).actualEnd,total);
+  for(let i=0;i<4;i++){
+    const m=e.s.measurements[i],bp=e.s.phases.find(p=>p.id===`bp${i}`),post=e.s.phases.find(p=>p.kind==='post'&&p.round===i);
+    assert.equal(bp.actualEnd-bp.actualStart,bpSeconds);
+    assert.equal(post.actualStart,m.deflatedAt);assert.equal(post.actualEnd-m.deflatedAt,30);
+    if(i>0)assert.equal(m.pressedAt-e.s.measurements[i-1].deflatedAt,165);
+  }
+  assert.equal(e.report(at(total)).timingPolicy.fixedNonBpSeconds,615);
+});
+test('early deflation immediately starts 30s wait even before forehead temperature is due',()=>{
+  const e=started();run(e,0,94);
+  e.deflate(at(95));e.tick(at(95));assert.equal(e.current().id,'post0');
+  assert.equal(e.current().actualStart,95);assert.equal(e.phaseTarget(),125);
+  assert.equal(e.confirmTemperature(36.6,99,at(99)),false);
+  assert.equal(e.confirmTemperature(36.6,100,at(100)),true);
+  for(let t=96;t<125;t++)e.tick(at(t));assert.equal(e.current().id,'post0');
+  e.tick(at(125));assert.equal(e.current().id,'exercise1');
+});
+test('forehead entry does not reset post timer, and missing entry requires explicit verification or skip',()=>{
+  const e=started();run(e,0,94);e.deflate(at(95));e.tick(at(95));
+  for(let t=96;t<=125;t++)e.tick(at(t));assert.equal(e.current().id,'post0');
+  assert.equal(e.phaseTarget(),125);assert.ok(e.blockers(at(125)).some(x=>x.includes('额温')));
+  assert.equal(e.confirmTemperature(36.6,126,at(126)),true);e.tick(at(126));assert.equal(e.current().id,'exercise1');
+  const other=started();run(other,0,94);other.deflate(at(95));other.tick(at(95));
+  assert.equal(other.skip(at(96)),'temperature_wait');assert.equal(other.skip(at(97)),'temperature');
+  assert.equal(other.s.measurements[0].temperature,null);assert.equal(other.s.measurements[0].temperatureSkippedAt,97);
+});
+const legacy=JSON.parse(readFileSync(new URL('./fixtures/legacy-protocol.json',import.meta.url),'utf8'));
+function legacyState(){const s=newState(origin);return {...s,version:legacy.version,minBpInterval:240,phases:legacy.phases.map(p=>({...p,extra:0,actualStart:null,actualEnd:null}))};}
+test('unstarted old sessions adopt new protocol without losing identity or pre-rest clock',()=>{
+  const s=legacyState();Object.assign(s,{mode:'prerest',subject:'KEEP-01',subjectName:'保留姓名',preStart:origin});
+  const restored=restoreProtocolState(s);
+  assert.equal(restored.version,PROTOCOL_VERSION);assert.equal(restored.phases.length,18);assert.equal(restored.minBpInterval,0);
+  assert.equal(restored.subject,'KEEP-01');assert.equal(restored.subjectName,'保留姓名');assert.equal(restored.preStart,origin);
+  assert.ok(restored.events.some(e=>e.type==='unstarted_protocol_updated'));
+});
+test('active legacy recordings retain their old timing, measurements and raw session',()=>{
+  const old=new ProtocolEngine(legacyState());old.startPreRest(origin-PRE_REST*1000);old.tick(origin);old.begin(origin);run(old,0,100);
+  old.s.rawSessionId='preserve-raw-session';const saved=JSON.parse(JSON.stringify(old.s));
+  const restored=new ProtocolEngine(restoreProtocolState(saved));assert.equal(restored.compactProtocol,false);
+  assert.equal(restored.s.rawSessionId,'preserve-raw-session');assert.equal(restored.s.measurements[0].temperature,36.5);
+  assert.equal(restored.s.phases.length,19);assert.equal(restored.s.minBpInterval,240);
+  restored.deflate(at(100));restored.tick(at(100));assert.equal(restored.current().id,'bp0');assert.equal(restored.phaseTarget(),150);
+  run(restored,101,1080);assert.equal(restored.s.mode,'await-finish');assert.equal(restored.s.phases.at(-1).actualEnd,1080);
+  assert.equal(restoreProtocolState({version:'unknown',phases:[]}),null);
 });

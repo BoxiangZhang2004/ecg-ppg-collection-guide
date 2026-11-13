@@ -1,13 +1,14 @@
-import {ProtocolEngine,newState,formatTime as ft,PRE_REST,PROTOCOL_VERSION,LABELS} from './engine.mjs?v=4.6';
-import {Acquisition} from './acquisition.mjs?v=4.6';
-import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.6';
+import {ProtocolEngine,restoreProtocolState,formatTime as ft,PRE_REST,LABELS} from './engine.mjs?v=4.7';
+import {Acquisition} from './acquisition.mjs?v=4.7';
+import {detectSerialSupport,ONLINE_URL} from './serial-support.mjs?v=4.7';
+import {WorkflowSpeaker,workflowPrompt,VOICE_POLICY_VERSION} from './voice-prompts.mjs?v=4.7';
 const $=id=>document.getElementById(id),KEY='ecg-ppg-guide-session-v1',PREFS='ecg-ppg-guide-preferences-v1';
 const serialSupport=detectSerialSupport();
 $('browser-warning').hidden=serialSupport.supported;$('browser-warning-reason').textContent=serialSupport.message;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let engine=new ProtocolEngine(),audio,lock,renderKey='',lastRender=0,lastSave=0,lastBeat=-1,lastTask='',tempReview=null,tempDraft={},dialogCallback,backgroundAt=null;
-try{const s=JSON.parse(localStorage.getItem(KEY)||'null');if(s?.version===PROTOCOL_VERSION&&s.phases?.length===19){engine=new ProtocolEngine(s);s.subjectName??='';if(s.mode==='running'){if(!s.hold)engine.hold('attention','页面已恢复，请核对当前状态后继续',Date.now());s.lastTick=Date.now();}}}catch{}
-try{const p=JSON.parse(localStorage.getItem(PREFS)||'null');if(p){$('sound').checked=p.sound;$('voice').checked=p.voice;}}catch{}
+try{const s=restoreProtocolState(JSON.parse(localStorage.getItem(KEY)||'null'));if(s){engine=new ProtocolEngine(s);s.subjectName??='';if(s.mode==='running'){if(!s.hold)engine.hold('attention','页面已恢复，请核对当前状态后继续',Date.now());s.lastTick=Date.now();}}}catch{}
+try{const p=JSON.parse(localStorage.getItem(PREFS)||'null');if(p){$('sound').checked=p.sound;$('voice').checked=p.voicePolicyVersion===VOICE_POLICY_VERSION?p.voice:true;}}catch{}
 $('subject-name').value=engine.s.subjectName||'';$('subject-code').value=engine.s.subject||'';
 engine.s.qualityAutomatic=true;
 let signalState={ok:false,status:'waiting',reason:'等待原始数据',ecg:{ok:false,reason:'判断中'},ppg:{ok:false,reason:'判断中'}},recordingBusy=false,exportBusy=false,lastSignalCheck=0,lastPlot=0,recoveredRaw=null,lastFault='',showRaw=false;
@@ -18,9 +19,13 @@ function toast(text){$('toast').textContent=text;$('toast').hidden=false;clearTi
 function changed(){renderKey='';save();render(Date.now());}
 async function unlock(){try{audio??=new(window.AudioContext||window.webkitAudioContext)();if(audio.state==='suspended')await audio.resume();}catch{}}
 function tone(hz=750,duration=.065){if(!$('sound').checked||!audio||audio.state!=='running')return;const t=audio.currentTime,o=audio.createOscillator(),g=audio.createGain();o.frequency.value=hz;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.1,t+.006);g.gain.exponentialRampToValueAtTime(.001,t+duration);o.connect(g);g.connect(audio.destination);o.start(t);o.stop(t+duration+.01);}
-function speak(text,quick=false){if(!$('voice').checked||!('speechSynthesis'in window)||document.hidden)return;const u=new SpeechSynthesisUtterance(text);u.lang='zh-CN';u.rate=quick?1.7:1.05;const v=speechSynthesis.getVoices().find(v=>/zh[-_]CN/i.test(v.lang));if(v)u.voice=v;speechSynthesis.cancel();speechSynthesis.speak(u);}
+const speaker=new WorkflowSpeaker({enabled:()=>$('voice').checked,hidden:()=>document.hidden,onStatus:(status,text)=>{
+ $('voice-warning').hidden=status==='requested';$('voice-warning-text').textContent=status==='requested'?'':text;
+ engine.log(status==='requested'?'voice_prompt_requested':'voice_prompt_error',{status,text},Date.now());
+}});
+function speak(text,quick=false){return speaker.speak(text,quick);}
 async function wake(){try{if('wakeLock'in navigator&&!document.hidden)lock=await navigator.wakeLock.request('screen');}catch{}}
-function release(){lock?.release().catch(()=>{});lock=null;if('speechSynthesis'in window)speechSynthesis.cancel();}
+function release(){lock?.release().catch(()=>{});lock=null;speaker.cancel();}
 function full(){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.().catch(()=>{});}
 function ask(title,content,confirm,callback){$('dialog-title').textContent=title;$('dialog-content').innerHTML=content;$('dialog-confirm').textContent=confirm;dialogCallback=callback;$('dialog').returnValue='';$('dialog').showModal();}
 $('dialog').addEventListener('close',()=>{const cb=dialogCallback;dialogCallback=null;if($('dialog').returnValue==='confirm'){const result=cb?.();result?.catch?.(error=>toast(error.message));}});
@@ -28,7 +33,7 @@ const button=(action,label,disabled=false,minor=false)=>`<button data-action="${
 function task(now){
  const s=engine.s,p=engine.current(),t=engine.elapsed(now),scheduled=engine.schedule(now),remaining=Math.max(0,scheduled[s.index].end-t);
  const result={key:'',title:'现在安静静坐',phase:p.title,seconds:Math.ceil(remaining),detail:'双脚平放，前臂放在支撑面上。',html:'',hint:''};
- if(s.mode==='prerest')return {...result,key:'pre',phase:'开录前静坐',title:'现在安静静坐',seconds:Math.max(0,Math.ceil(PRE_REST-(now-s.preStart)/1000)),detail:'此段不计入 18 分钟记录。'};
+ if(s.mode==='prerest')return {...result,key:'pre',phase:'开录前静坐',title:'现在安静静坐',seconds:Math.max(0,Math.ceil(PRE_REST-(now-s.preStart)/1000)),detail:'此段不计入开录后的采集时间。'};
  if(s.mode==='ready'){const canStart=capture.connected&&!!capture.parser.protocol&&!recordingBusy;return {...result,key:'ready:'+canStart+':'+recordingBusy,phase:'开始记录',title:'现在开始原始数据采集',seconds:null,detail:canStart?'点击后同时开始本机保存与 00:00 计时。':'请先连接采集板，等待识别到有效原始帧。',html:button('begin',recordingBusy?'正在准备本机保存…':'开始采集并计时 →',!canStart)};}
  if(s.mode==='await-finish')return {...result,key:'finish',phase:'结束记录',title:'确认恢复，结束本次采集',seconds:null,detail:'确认本人已恢复。点击后停止原始保存并完成本机写入。',html:button('finish','已恢复，停止采集并保存')};
  if(p.kind==='quality'){
@@ -41,24 +46,29 @@ function task(now){
   const extending=progress.extensionPlanned&&progress.automaticExtraSeconds>0&&remaining>0;
   return {...result,key:'quality:'+ready+':'+(q.confirmedAt!==null)+':'+extending,title:extending?'继续静坐，补足有效时长':'安静静坐，累计有效波形',seconds:remaining,detail:(q.automaticReason||'正在检查两路信号')+'。\n单次不合格不会清零；目标累计 80 秒，并保留完整 20 秒片段。',html:button('quality',q.confirmedAt!==null?'已核验，等待进入测量':'累计条件满足，确认测血压 →',!ready||q.confirmedAt!==null),hint};
  }
- if(p.kind==='measure'){
-  const m=s.measurements[p.round],phase=LABELS[p.round];
+ if(p.kind==='measure'||(engine.compactProtocol&&p.kind==='post')){
+  const m=s.measurements[p.round],post=p.kind==='post',phase=post?p.title:LABELS[p.round];
+  const canDeflate=!post&&engine.compactProtocol&&m.pressedAt!==null&&m.deflatedAt===null&&m.deflationSkippedAt==null;
+  const withDeflate=view=>({...view,html:view.html+(canDeflate?button('deflate','读数完成且完全放气 → 开始 30 秒等待',false,!!view.html):'')});
   if(m.pressedAt===null&&m.bpSkippedAt==null)return {...result,key:'bp',phase,title:'现在测血压',seconds:null,detail:'请操作者按下血压计测量键。',html:button('bp','已按下血压计，确认 →')};
   const wait=engine.temperatureDueAt()-t;
-  if(wait>0)return {...result,key:'wait-temp',phase,title:'现在保持静坐',seconds:Math.ceil(wait),detail:'倒计时结束后测额温。'};
   if(m.verifiedAt===null&&m.temperatureSkippedAt==null){
-   if(tempReview?.round===p.round)return {...result,key:'review:'+tempReview.value,phase,title:'核对额温读数',seconds:null,detail:'请对照额温枪，再确认一次。',html:`<div class="reading">${tempReview.value.toFixed(1)} ℃</div>${button('verify-temp','读数正确，进入下一步 →')}${button('edit-temp','重新填写',false,true)}`};
-   return {...result,key:'temperature',phase,title:'现在测额温',seconds:null,detail:'由操作者测量，填写额温枪读数。',html:`<div class="temperature-entry"><input id="temperature" type="number" inputmode="decimal" min="25" max="45" step="0.1" value="${esc(tempDraft[p.round]??'')}" aria-label="额温读数"><span>℃</span></div>${button('temperature','已测额温，确认 →')}`};
+   const hint=post?'30 秒等待计时继续；请在本段完成额温录入与复核。':'60 秒为测压预留时间；读数完成且完全放气即可立即确认。';
+   if(wait>0)return withDeflate({...result,key:post?'post-wait-temp':'wait-temp',phase,title:post?'放气后等待，稍后测额温':'现在保持静坐',seconds:post?Math.ceil(remaining):Math.ceil(wait),detail:`再过 ${Math.ceil(wait)} 秒测额温。`,hint});
+   if(tempReview?.round===p.round)return withDeflate({...result,key:(post?'post-review:':'review:')+tempReview.value,phase,title:'核对额温读数',seconds:post?Math.ceil(remaining):null,temperatureValue:tempReview.value.toFixed(1),detail:'请对照额温枪，再确认一次。',html:`<div class="reading">${tempReview.value.toFixed(1)} ℃</div>${button('verify-temp','读数正确，确认 →')}${button('edit-temp','重新填写',false,true)}`,hint});
+   return withDeflate({...result,key:post?'post-temperature':'temperature',phase,title:'现在测额温',seconds:post?Math.ceil(remaining):null,detail:'由操作者测量，填写额温枪读数。',html:`<div class="temperature-entry"><input id="temperature" type="number" inputmode="decimal" min="25" max="45" step="0.1" value="${esc(tempDraft[p.round]??'')}" aria-label="额温读数"><span>℃</span></div>${button('temperature','已测额温，确认 →')}`,hint});
   }
-  if(m.deflatedAt===null&&m.deflationSkippedAt==null&&m.bpSkippedAt==null)return {...result,key:'deflate',phase,title:'等待血压测量结束',seconds:null,detail:'确认本次测量结束，袖带已完全放气。',html:button('deflate','已测完且完全放气，确认 →')};
+  if(!post&&m.deflatedAt===null&&m.deflationSkippedAt==null&&m.bpSkippedAt==null)return {...result,key:'deflate',phase,title:'等待血压测量结束',seconds:null,detail:engine.compactProtocol?'60 秒为预留时间。读数完成且完全放气后立即确认，不用等满 60 秒。':'确认本次测量结束，袖带已完全放气。',html:button('deflate','读数完成且完全放气，确认 →')};
   const skipped=m.bpSkippedAt!=null||m.temperatureSkippedAt!=null||m.deflationSkippedAt!=null;
-  return {...result,key:'measured',phase,title:'现在安静静坐',detail:skipped?'本节点含跳过，静坐到下一时间点。':'本次测量已确认，静坐到下一时间点。'};
+  return {...result,key:post?'post':'measured',phase,title:post?'完全放气后，安静等待 30 秒':'现在安静静坐',detail:skipped?'本节点含跳过，操作记录已保留。':post?'从确认读数完成且完全放气时开始计时。':'本次测量已确认，静坐到下一时间点。'};
  }
  if(p.kind==='settle')return {...result,key:'settle',title:'现在停止踏步',detail:'坐好，双脚平放，前臂支撑。'};
  return {...result,key:'rest'};
 }
 function render(now){
  const s=engine.s,p=engine.current(),isExercise=s.mode==='running'&&p.kind==='exercise',done=['completed','aborted'].includes(s.mode),t=engine.elapsed(now);
+ let voiceView={};
+ $('legacy-protocol').hidden=engine.compactProtocol;
  $('identity').textContent=s.subject?`${s.subjectName||''}　${s.subject}`:'ECG / PPG 采集';
  $('identity').title=$('identity').textContent;
  $('skip-status').hidden=!s.skips.length;
@@ -94,6 +104,7 @@ function render(now){
   if(over){$('left-panel').classList.remove('active');$('right-panel').classList.remove('active');$('beat-word').textContent='停止踏步，坐好';$('beat-count').textContent='';}
  }else if(!done&&s.mode!=='setup'){
   const view=task(now),key=[s.mode,s.index,view.key,s.events.length].join(':');
+  voiceView=view;
   $('phase-label').textContent=view.phase;$('instruction').textContent=view.title;$('remaining').textContent=view.seconds===null?'':ft(view.seconds);$('detail').textContent=view.detail;
   if(key!==renderKey){$('action').innerHTML=view.html;renderKey=key;}
   $('next-hint').textContent=view.hint||'';
@@ -101,12 +112,14 @@ function render(now){
    const interval=blockers.find(x=>x.includes('距上次'));
    if(interval)$('next-hint').textContent=interval;
   }
-  const announceKey=s.mode+':'+s.index+':'+view.key;
-  if(announceKey!==lastTask){lastTask=announceKey;$('announcer').textContent=view.title;if(view.key==='bp'||view.key==='temperature'||view.key==='settle'||s.mode==='ready'){tone(880,.12);speak(view.title);}}
  }
  if(done){
   $('summary-title').textContent=s.mode==='completed'?(s.skips.length?'流程结束（含跳过）':'采集结束'):'已提前终止';$('summary-identity').textContent=`${s.subjectName||''}　编号 ${s.subject}`;$('summary-time').textContent=`实际计时 ${ft(t)}${s.skips.length?' · 跳过 '+s.skips.length+' 步':''}`;
   $('summary-rows').innerHTML=s.measurements.map(m=>`<tr><td>${m.label}</td><td>${m.pressedAt===null?(m.bpSkippedAt!=null?'已跳过':'未确认'):ft(m.pressedAt)}</td><td>${m.deflatedAt===null?(m.deflationSkippedAt!=null?'已跳过':m.bpSkippedAt!=null?'未测量':'未确认'):ft(m.deflatedAt)}</td><td>${m.verifiedAt===null?(m.temperatureSkippedAt!=null?'已跳过':'未确认'):m.temperature.toFixed(1)+' ℃ · 已复核'}</td></tr>`).join('');
+ }
+ const prompt=workflowPrompt(engine,voiceView,now);
+ if(prompt&&prompt.key!==lastTask&&s.mode!=='setup'){
+  lastTask=prompt.key;$('announcer').textContent=prompt.text;tone(880,.12);speak(prompt.text);
  }
 }
 function beat(now){
@@ -138,7 +151,7 @@ async function stopRaw(){const id=engine.s.rawSessionId;if(!id)return;const flow
 async function downloadRaw(id=engine.s.rawSessionId||recoveredRaw?.id){
  if(!id)throw new Error('当前流程尚无原始记录，上次采集可在“本机原始记录”导出');
  if(exportBusy)return;exportBusy=true;changed();
- try{const result=await capture.export(id,id===engine.s.rawSessionId?engine.report():null);if(id===capture.recorder.session?.id&&capture.recorder.fault)capture.recorder.unsavedExported=true;const url=URL.createObjectURL(result.blob),a=document.createElement('a');a.href=url;a.download=result.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);toast('已导出原始采集包，请自行备份。');}finally{exportBusy=false;changed();}
+ try{const result=await capture.export(id,id===engine.s.rawSessionId?engine.report():null);if(id===capture.recorder.session?.id&&capture.recorder.fault)capture.recorder.unsavedExported=true;const url=URL.createObjectURL(result.blob),a=document.createElement('a');a.href=url;a.download=result.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),2000);toast('已导出原始采集包，请自行备份。');speak('已导出原始采集包，请核对血压计记录并备份。');}finally{exportBusy=false;changed();}
 }
 function drawWaveforms(now){
  if($('acquisition-panel').hidden)return;
@@ -179,7 +192,8 @@ function download(kind){
 $('subject-form').addEventListener('submit',async e=>{e.preventDefault();const name=$('subject-name').value.trim(),code=$('subject-code').value.trim();if(!name||!code)return;engine.s.subjectName=name;engine.s.subject=code;full();await unlock();engine.startPreRest(Date.now());wake();changed();});
 $('subject-name').addEventListener('input',()=>{engine.s.subjectName=$('subject-name').value;save();});$('subject-code').addEventListener('input',()=>{engine.s.subject=$('subject-code').value;save();});
 $('action').addEventListener('input',e=>{if(e.target.id==='temperature')tempDraft[engine.current().round]=e.target.value;});
-for(const id of ['sound','voice'])$(id).addEventListener('change',()=>{try{localStorage.setItem(PREFS,JSON.stringify({sound:$('sound').checked,voice:$('voice').checked}));}catch{}if(!$('voice').checked&&'speechSynthesis'in window)speechSynthesis.cancel();});
+function savePreferences(){try{localStorage.setItem(PREFS,JSON.stringify({sound:$('sound').checked,voice:$('voice').checked,voicePolicyVersion:VOICE_POLICY_VERSION}));}catch{}}
+for(const id of ['sound','voice'])$(id).addEventListener('change',()=>{savePreferences();if(!$('voice').checked)speaker.cancel();else if(id==='voice'){lastTask='';changed();}});
 document.addEventListener('click',async e=>{
  const el=e.target.closest('[data-action]');if(!el||el.disabled)return;const a=el.dataset.action,now=Date.now(),p=engine.current(),s=engine.s;if(recordingBusy&&!['fullscreen','menu','close-menu','copy-online'].includes(a))return;
  try{switch(a){
@@ -190,7 +204,7 @@ document.addEventListener('click',async e=>{
  case 'export-raw':await downloadRaw();break;
  case 'export-saved':await downloadRaw(el.dataset.id);break;
  case 'raw-history':{const records=await capture.journal.list();$('menu').hidden=true;ask('本机原始记录',records.length?records.slice(0,20).map(r=>`<div class="history-row"><span>${esc(r.subjectName)} ${esc(r.subjectCode)}${r.synthetic?' · 合成':''}<small>${new Date(r.startedAt).toLocaleString('zh-CN')} · ${r.frames.toLocaleString()} 帧</small></span><button type="button" data-action="export-saved" data-id="${esc(r.id)}">导出</button></div>`).join(''):'<p>尚无本机原始记录。</p>','关闭',()=>{});break;}
- case 'skip':if(s.mode==='ready'&&capture.connected&&capture.parser.protocol){await startRaw(true);break;}if(engine.skip(now)){tempReview=null;lastBeat=-1;if('speechSynthesis'in window)speechSynthesis.cancel();if(engine.s.mode==='completed'){release();await stopRaw();}changed();}break;
+ case 'skip':if(s.mode==='ready'&&capture.connected&&capture.parser.protocol){await startRaw(true);break;}if(engine.skip(now)){tempReview=null;lastBeat=-1;speaker.cancel();if(engine.s.mode==='completed'){release();await stopRaw();}changed();}break;
  case 'begin':full();await unlock();await startRaw();break;
  case 'quality':engine.confirmQuality(now);engine.tick(now);changed();break;
  case 'quality-more':engine.extend(20,'操作者选择补采 20 秒',now);changed();break;
@@ -202,23 +216,24 @@ document.addEventListener('click',async e=>{
  case 'deflate':engine.deflate(now);engine.tick(now);changed();break;
  case 'unstable':engine.markUnstable(now);changed();break;
  case 'restart-quality':engine.restartQuality(now);changed();break;
- case 'extend':case 'extend-custom':{const sec=Number(a==='extend'?el.dataset.seconds:$('extra-seconds').value);if(engine.extend(sec,'操作者加时',now)){changed();toast(`已加时 ${sec} 秒，后续一起顺延。`);}else toast('请输入 1–3600 秒。');break;}
+ case 'extend':case 'extend-custom':{const sec=Number(a==='extend'?el.dataset.seconds:$('extra-seconds').value);if(engine.extend(sec,'操作者加时',now)){changed();speak(`已手动加时${sec}秒，后续节点一起顺延。`);toast(`已加时 ${sec} 秒，后续一起顺延。`);}else toast('请输入 1–3600 秒。');break;}
  case 'hold':if(s.hold)await resumeFlow();else engine.hold('manual','保持当前阶段',now);changed();break;
  case 'resume':await unlock();await resumeFlow();break;
  case 'finish':s.recovered=true;engine.finish(now);release();await stopRaw();changed();break;
  case 'fullscreen':if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});else full();break;
  case 'menu':$('menu').hidden=!$('menu').hidden;break;
  case 'close-menu':$('menu').hidden=true;break;
- case 'test-audio':await unlock();tone(660,.15);speak('左，右，左，右');break;
+ case 'replay-voice':$('voice').checked=true;savePreferences();await unlock();{const prompt=workflowPrompt(engine,['setup','completed','aborted'].includes(s.mode)?{}:task(now),now);if(prompt)speak(prompt.text);}break;
+ case 'test-audio':$('voice').checked=true;savePreferences();await unlock();tone(660,.15);speak('语音提示已开启。每一步都会播报，请调整音量。坐姿踏步口令：左，右，左，右。');break;
  case 'export-csv':download('csv');break;
  case 'export-json':download('json');break;
  case 'abort':$('menu').hidden=true;ask('提前终止本次采集？','<p>请停止运动。确认后停止本页原始保存，已有记录保留。</p>','终止并保留记录',async()=>{engine.abort('操作者提前终止',Date.now());release();await stopRaw();changed();});break;
  case 'new-session':$('menu').hidden=true;ask('开始下一位受试者？','<p>请先导出当前采集包。原始记录仍保留在“本机原始记录”中。</p>','开始下一位',async()=>{if(capture.recorder.fault&&capture.recorder.unsaved.length&&!capture.recorder.unsavedExported)throw new Error('请先导出当前采集包，未写入缓冲仍在本页');if(capture.recorder.recording){engine.abort('新建受试者前结束记录',Date.now());await stopRaw();}release();engine=new ProtocolEngine();engine.s.qualityAutomatic=true;tempReview=null;tempDraft={};recoveredRaw=null;$('subject-name').value='';$('subject-code').value='';renderKey='';lastTask='';lastBeat=-1;changed();});break;
  }}catch(error){if(error.name!=='NotFoundError'){toast(error.message);$('raw-notice').textContent=error.message;}changed();}
 });
-document.addEventListener('visibilitychange',()=>{if(document.hidden){backgroundAt=Date.now();save();if('speechSynthesis'in window)speechSynthesis.cancel();}else{if(engine.s.mode==='running'&&backgroundAt!==null&&Date.now()-backgroundAt>5000)engine.hold('attention','页面离开过前台，请核对当前状态',Date.now());backgroundAt=null;wake();changed();}});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){backgroundAt=Date.now();save();speaker.cancel();}else{if(engine.s.mode==='running'&&backgroundAt!==null&&Date.now()-backgroundAt>5000)engine.hold('attention','页面离开过前台，请核对当前状态',Date.now());backgroundAt=null;lastTask='';wake();changed();}});
 window.addEventListener('pagehide',()=>{save();capture.recorder.flush();});window.addEventListener('beforeunload',e=>{if(['running','prerest','await-finish'].includes(engine.s.mode)){save();capture.recorder.flush();e.preventDefault();e.returnValue='';}});
 window.addEventListener('storage',e=>{if(e.key===KEY&&engine.s.mode==='running'&&!engine.s.hold){engine.hold('attention','另一标签页修改了记录，请仅用一个页面',Date.now());changed();}});
 render(Date.now());save();
-setInterval(()=>{const now=Date.now();if(now-lastSignalCheck>=100){signalState=capture.snapshot(now);engine.applySignalQuality({...signalState,ok:signalState.ok&&capture.recorder.recording&&capture.recorder.frames>0,reason:capture.recorder.recording?signalState.reason:'尚未保存原始数据'},now);lastSignalCheck=now;}capture.tick(now,signalState);if(capture.recorder.recording&&engine.s.mode==='running'&&capture.monitor.lastReceived!==null&&now-capture.monitor.lastReceived>1000)engine.hold('data','数据断流，请检查设备',now);const transition=engine.tick(now);if(transition){lastBeat=-1;save();if(transition==='await-finish'){tone(880,.15);speak('现在确认恢复并停止记录');}}if(now-lastRender>=100||transition){render(now);lastRender=now;}if(now-lastPlot>=100){drawWaveforms(now);lastPlot=now;}beat(now);if(now-lastSave>=1000){save();lastSave=now;}},50);
+setInterval(()=>{const now=Date.now();if(now-lastSignalCheck>=100){signalState=capture.snapshot(now);engine.applySignalQuality({...signalState,ok:signalState.ok&&capture.recorder.recording&&capture.recorder.frames>0,reason:capture.recorder.recording?signalState.reason:'尚未保存原始数据'},now);lastSignalCheck=now;}capture.tick(now,signalState);if(capture.recorder.recording&&engine.s.mode==='running'&&capture.monitor.lastReceived!==null&&now-capture.monitor.lastReceived>1000)engine.hold('data','数据断流，请检查设备',now);const transition=engine.tick(now);if(transition){lastBeat=-1;save();}if(now-lastRender>=100||transition){render(now);lastRender=now;}if(now-lastPlot>=100){drawWaveforms(now);lastPlot=now;}beat(now);if(now-lastSave>=1000){save();lastSave=now;}},50);
 if(location.protocol!=='file:'&&'serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});

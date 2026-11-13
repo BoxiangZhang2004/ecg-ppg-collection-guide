@@ -63,7 +63,7 @@ test('live monitor failures preserve good time and bounded compensation shifts l
  assert.ok(firstRecovery>76);assert.ok(bpAt<firstRecovery+80);assert.ok(bpAt>90);assert.ok(bpAt<=130);
  assert.ok(e.s.events.some(v=>v.type==='automatic_quality_rejected'&&v.reason.includes('PPG')));
  const schedule=e.schedule(bpAt*1000),exercise=schedule.find(p=>p.id==='exercise1');
- assert.equal(exercise.start,240+bpAt-90);assert.equal(exercise.duration,40);
+ assert.equal(exercise.start,180+bpAt-90);assert.equal(exercise.duration,40);
  assert.match(e.report(bpAt*1000).scope,/不清零累计/);
 });
 class MemoryJournal{
